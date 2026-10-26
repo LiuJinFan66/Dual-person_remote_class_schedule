@@ -220,7 +220,10 @@ function bindUpload() {
         body: JSON.stringify({ image: state.imageData }),
       });
       const data = await resp.json();
-      if (!resp.ok || !data.courses) throw new Error(data.error || '识别失败');
+      if (!resp.ok || !data.courses) {
+        const msg = (data.error || '识别失败') + (data.detail ? '｜' + String(data.detail).slice(0, 90) : '');
+        throw new Error(msg);
+      }
       state.preview = data.courses.map(normCourse);
       renderPreview();
       toast('识别完成，请核对后保存');
