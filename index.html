@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#6d28d9" />
+  <title>我们的课表 · 蓝粉双色</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">我们的课表</div>
+    <div class="room">
+      <span id="roomId" class="room-id">----</span>
+      <button id="shareBtn" class="btn-mini" title="复制房间链接">分享</button>
+    </div>
+  </header>
+
+  <!-- 上传 / 识别 -->
+  <section class="card">
+    <div class="card-head">
+      <span>① 上传我的课表截图</span>
+    </div>
+    <div class="role-pick">
+      <span class="role-label">这份课表属于：</span>
+      <div class="seg">
+        <button class="seg-btn blue active" data-role="blue">蓝（我）</button>
+        <button class="seg-btn pink" data-role="pink">粉（对象）</button>
+      </div>
+    </div>
+    <div class="upload-row">
+      <label class="file-btn">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        选择图片
+      </label>
+      <button id="recognizeBtn" class="btn-primary" disabled>识别课表</button>
+    </div>
+    <p id="uploadHint" class="hint">支持教务系统 / 超级课表的截图，自动识别课程名、时间、地点。</p>
+  </section>
+
+  <!-- 识别结果预览（可编辑） -->
+  <section class="card" id="previewCard" hidden>
+    <div class="card-head">
+      <span>② 核对识别结果</span>
+      <button id="addRowBtn" class="btn-mini">＋ 加一行</button>
+    </div>
+    <div class="table-wrap">
+      <table class="edit-table">
+        <thead>
+          <tr>
+            <th>课程</th><th>星期</th><th>开始节</th><th>结束节</th><th>地点</th><th>周次</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+    </div>
+    <div class="preview-actions">
+      <button id="confirmBtn" class="btn-primary">保存并合并</button>
+      <button id="cancelBtn" class="btn-ghost">取消</button>
+    </div>
+  </section>
+
+  <!-- 合并课表 -->
+  <section class="card">
+    <div class="card-head">
+      <span>③ 合并周课表</span>
+      <div class="toggles">
+        <label class="tg blue"><input type="checkbox" id="tgBlue" checked /> 蓝</label>
+        <label class="tg pink"><input type="checkbox" id="tgPink" checked /> 粉</label>
+      </div>
+    </div>
+    <div class="week-pick">
+      <span>显示周次：</span>
+      <div class="seg small">
+        <button class="seg-btn active" data-week="all">全周</button>
+        <button class="seg-btn" data-week="odd">单周</button>
+        <button class="seg-btn" data-week="even">双周</button>
+      </div>
+      <button id="refreshBtn" class="btn-mini" title="立即同步">↻</button>
+    </div>
+    <div class="grid-wrap">
+      <div id="scheduleGrid" class="schedule-grid"></div>
+    </div>
+    <p class="legend">
+      <span class="dot blue"></span>蓝有课
+      <span class="dot pink"></span>粉有课
+      <span class="dot both"></span>都上课
+      <span class="dot free"></span>都空闲
+    </p>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
