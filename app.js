@@ -116,24 +116,77 @@ function clampInt(v, min, max, dflt) {
   if (isNaN(n)) return dflt;
   return Math.max(min, Math.min(max, n));
 }
+function pick(o, keys) {
+  for (const k of keys) { if (o[k] != null && o[k] !== '') return o[k]; }
+  return undefined;
+}
+function parseNums(v) {
+  if (v == null) return [];
+  const m = String(v).match(/\d+/g);
+  return m ? m.map(Number) : [];
+}
+function toDay(v) {
+  if (v == null || v === '') return 1;
+  if (typeof v === 'number' || /^\d+$/.test(String(v).trim())) {
+    let n = parseInt(v, 10);
+    if (n === 0) n = 7; // 0 视为周日
+    return clampInt(n, 1, 7, 1);
+  }
+  const s = String(v);
+  const cn = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 7, '天': 7 };
+  const m = s.match(/[一二三四五六日天]/);
+  if (m) return cn[m[0]] || 1;
+  const en = { sun: 7, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const em = s.toLowerCase().match(/sun|mon|tue|wed|thu|fri|sat/);
+  if (em) return en[em[0]] || 1;
+  return 1;
+}
+function normWeekType(v) {
+  if (v == null || v === '') return 'all';
+  const s = String(v).toLowerCase();
+  if (s.includes('单') || s === 'odd') return 'odd';
+  if (s.includes('双') || s === 'even') return 'even';
+  return 'all';
+}
 function normCourse(c) {
-  // 兼容旧数据：旧版只有 week(all/odd/even)
-  let weekType = c.weekType || c.week || 'all';
-  if (!WEEK_TYPES.includes(weekType)) weekType = 'all';
-  let ws = clampInt(c.weekStart, 1, 30, 1);
-  let we = clampInt(c.weekEnd, 1, 30, 16);
+  c = c || {};
+  const name = String(pick(c, ['name', '课程', '课程名', 'course', 'courseName']) || '').trim();
+  const day = toDay(pick(c, ['day', '星期', '周几', '星期几', 'weekday']));
+  const loc = String(pick(c, ['loc', 'location', '地点', '教室', 'room']) || '').trim();
+  const teacher = String(pick(c, ['teacher', '教师', '老师']) || '').trim();
+
+  // 节次：可能是分开的 start/end，也可能是一个 "1-2节" 的合并字段
+  let startV = pick(c, ['start', '开始节', '起节', 'startPeriod', 'startSlot']);
+  let endV = pick(c, ['end', '结束节', '止节', 'endPeriod', 'endSlot']);
+  if (startV == null && endV == null) {
+    const ns = parseNums(pick(c, ['period', '节次', '时间', 'time']));
+    if (ns.length) { startV = ns[0]; endV = ns[ns.length - 1]; }
+  }
+  let start = clampInt(parseNums(startV)[0], 1, 12, 1);
+  let end = clampInt(parseNums(endV).slice(-1)[0], 1, 12, start);
+  if (end < start) end = start;
+
+  // 周次
+  let ws = clampInt(parseNums(pick(c, ['weekStart', '起始周', '开始周', 'startWeek']))[0], 1, 30, 1);
+  let we = clampInt(parseNums(pick(c, ['weekEnd', '结束周', 'stopWeek', 'endWeek'])).slice(-1)[0], 1, 30, 16);
+  let weekType = normWeekType(pick(c, ['weekType', '周次类型', '周类型', 'week']));
+  const weeksRaw = pick(c, ['weeks', '周次']);
+  if (Array.isArray(weeksRaw) && weeksRaw.length) {
+    const nums = weeksRaw.map(Number).filter(n => !isNaN(n));
+    if (nums.length) {
+      ws = Math.min(...nums); we = Math.max(...nums);
+      if (nums.every(n => n % 2 === 1)) weekType = 'odd';
+      else if (nums.every(n => n % 2 === 0)) weekType = 'even';
+    }
+  } else if (typeof weeksRaw === 'string' && weeksRaw) {
+    const nums = parseNums(weeksRaw);
+    if (nums.length) { ws = Math.min(...nums); we = Math.max(...nums); }
+    const wt = normWeekType(weeksRaw);
+    if (wt !== 'all') weekType = wt;
+  }
   if (we < ws) we = ws;
-  return {
-    name: String(c.name || '').trim(),
-    day: clampInt(c.day, 1, 7, 1),
-    start: clampInt(c.start, 1, 12, 1),
-    end: clampInt(c.end, 1, 12, 2),
-    loc: String(c.loc || c.location || '').trim(),
-    teacher: String(c.teacher || '').trim(),
-    weekStart: ws,
-    weekEnd: we,
-    weekType,
-  };
+
+  return { name, day, start, end, loc, teacher, weekStart: ws, weekEnd: we, weekType };
 }
 function normalizeSide(v) {
   if (Array.isArray(v)) return { startDate: null, courses: v.map(normCourse) };
