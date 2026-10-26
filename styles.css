@@ -137,7 +137,7 @@ button { font-family: inherit; cursor: pointer; border: none; }
 .cell.head { background: #f8fafc; color: var(--muted); font-weight: 600; }
 .cell.head .date { font-weight: 400; font-size: 9px; opacity: .75; }
 .cell.head.today { background: #ede9fe; color: var(--both); }
-.cell.time { background: #f8fafc; color: var(--muted); font-size: 10px; line-height: 1.2; }
+.cell.time { background: #f8fafc; color: var(--muted); font-size: 12px; font-weight: 600; }
 .cell.empty { background: var(--free); color: #cbd5e1; }
 .cell.blue { background: var(--blue-soft); color: #1d4ed8; border: 1px solid var(--blue); }
 .cell.pink { background: var(--pink-soft); color: #be185d; border: 1px solid var(--pink); }
@@ -151,6 +151,7 @@ button { font-family: inherit; cursor: pointer; border: none; }
 .dot.pink { background: var(--pink); }
 .dot.both { background: var(--both); }
 .dot.free { background: var(--free); border: 1px solid var(--line); }
+.version { margin: 10px 0 0; font-size: 11px; color: #b6bfcc; text-align: center; }
 
 .toast {
   position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);

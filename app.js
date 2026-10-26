@@ -384,9 +384,9 @@ function renderGrid() {
     grid.appendChild(cell('head' + (isToday ? ' today' : ''), DAYS[i] + '<br><span class="date">' + md(d) + '</span>'));
   }
 
-  // 时间行
+  // 节次行（只显示节次号，不显示具体时间：两校上课时间可能不同，统一按节次对齐）
   SLOTS.forEach(s => {
-    grid.appendChild(cell('time', s.n + '<br>' + s.t));
+    grid.appendChild(cell('time', String(s.n)));
     for (let i = 0; i < 7; i++) {
       const day = i + 1;
       const b = findCourse(state.blue, day, s.n, twB, state.showBlue);
