@@ -19,6 +19,7 @@ const state = {
   viewDate: todayStr(),
   preview: [],
   imageData: null,
+  editingExisting: false, // true = 正在编辑已保存的课表（允许保存空列表 = 清空）
 };
 
 // ===== 通用工具 =====
@@ -103,6 +104,8 @@ function bindRole() {
       state.role = btn.dataset.role;
       // 切换身份时，带出该侧已保存的开学日期
       $('startDateInput').value = state[state.role].startDate || '';
+      // 正在编辑「已保存课表」时切了身份，就改为载入另一侧已保存的课
+      if (state.editingExisting) openSavedEditor();
     });
   });
 }
@@ -225,12 +228,12 @@ function bindUpload() {
         throw new Error(msg);
       }
       state.preview = data.courses.map(normCourse);
+      state.editingExisting = false; // 新识别的结果，不属于「已保存课表」
       renderPreview();
       toast('识别完成，请核对后保存');
     } catch (e) {
       toast('识别失败：' + e.message + '（可手动添加）');
-      state.preview = [emptyCourse()];
-      renderPreview();
+      if (!state.preview.length) { state.preview = [emptyCourse()]; renderPreview(); }
     } finally {
       $('recognizeBtn').disabled = false;
       $('recognizeBtn').textContent = '识别课表';
@@ -247,6 +250,7 @@ function renderPreview() {
   state.preview.forEach((c, i) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      <td class="td-del"><button class="row-del" data-del="${i}" title="删除这一行">✕</button></td>
       <td><input data-i="${i}" data-k="name" value="${esc(c.name)}" placeholder="课程名"/></td>
       <td><select data-i="${i}" data-k="day">${DAYS.map((d, di) => `<option value="${di + 1}" ${c.day === di + 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></td>
       <td><input data-i="${i}" data-k="start" type="number" min="1" max="12" value="${c.start}"/></td>
@@ -254,8 +258,7 @@ function renderPreview() {
       <td><input data-i="${i}" data-k="loc" value="${esc(c.loc)}" placeholder="地点"/></td>
       <td><input data-i="${i}" data-k="weekStart" type="number" min="1" max="30" value="${c.weekStart}"/></td>
       <td><input data-i="${i}" data-k="weekEnd" type="number" min="1" max="30" value="${c.weekEnd}"/></td>
-      <td><select data-i="${i}" data-k="weekType">${WEEK_TYPES.map(w => `<option value="${w}" ${c.weekType === w ? 'selected' : ''}>${weekLabel(w)}</option>`).join('')}</select></td>
-      <td><button class="row-del" data-del="${i}">✕</button></td>`;
+      <td><select data-i="${i}" data-k="weekType">${WEEK_TYPES.map(w => `<option value="${w}" ${c.weekType === w ? 'selected' : ''}>${weekLabel(w)}</option>`).join('')}</select></td>`;
     body.appendChild(tr);
   });
   const intKeys = ['day', 'start', 'end', 'weekStart', 'weekEnd'];
@@ -269,8 +272,15 @@ function renderPreview() {
     b.addEventListener('click', () => {
       state.preview.splice(+b.dataset.del, 1);
       renderPreview();
+      toast(state.preview.length ? '已删除一行' : '已清空，可点「＋ 加一行」手动录入');
     });
   });
+  $('previewCount') && ($('previewCount').textContent = String(state.preview.length));
+  if (!state.preview.length) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="td-del"></td><td colspan="8" class="empty-row">暂无课程，点右上「＋ 加一行」手动添加</td>`;
+    body.appendChild(tr);
+  }
 }
 function weekLabel(w) { return w === 'all' ? '全周' : w === 'odd' ? '单周' : '双周'; }
 
@@ -286,13 +296,27 @@ async function postSide(side, startDate, courses) {
 
 function bindPreviewActions() {
   $('addRowBtn').addEventListener('click', () => {
-    if ($('previewCard').hidden) { state.preview = []; }
+    if ($('previewCard').hidden) { state.preview = []; $('previewCard').hidden = false; }
     state.preview.push(emptyCourse());
     renderPreview();
   });
+
+  // 清空全部识别结果
+  $('clearAllBtn').addEventListener('click', () => {
+    if (!state.preview.length) { toast('已经是空的了'); return; }
+    if (!confirm('清空当前这 ' + state.preview.length + ' 条课程？')) return;
+    state.preview = [];
+    renderPreview();
+    toast('已清空，可点「＋ 加一行」手动录入');
+  });
+
+  // 编辑已保存的课表（识别的课存错了也能在这里删掉）
+  $('editSavedBtn').addEventListener('click', openSavedEditor);
+
   $('cancelBtn').addEventListener('click', () => {
     $('previewCard').hidden = true;
     state.preview = [];
+    state.editingExisting = false;
     state.imageData = null;
     $('fileInput').value = '';
     $('recognizeBtn').disabled = true;
@@ -312,15 +336,20 @@ function bindPreviewActions() {
 
   $('confirmBtn').addEventListener('click', async () => {
     const courses = state.preview.filter(c => c.name);
-    if (!courses.length) { toast('没有可保存的课程'); return; }
+    if (!courses.length) {
+      if (!state.editingExisting) { toast('没有可保存的课程'); return; }
+      // 编辑已保存课表时允许存成空 → 等于把这一侧清空
+      if (!confirm('当前没有课程，保存后会清空「' + (state.role === 'blue' ? '蓝（我）' : '粉（对象）') + '」的全部课程，确定吗？')) return;
+    }
     const startDate = $('startDateInput').value || null;
-    if (!startDate) toast('提示：未填开学日期，将按「全周固定」显示');
+    if (!startDate && courses.length) toast('提示：未填开学日期，将按「全周固定」显示');
     $('confirmBtn').disabled = true;
     try {
       await postSide(state.role, startDate, courses);
-      toast('已保存，合并课表已更新');
+      toast(courses.length ? '已保存，合并课表已更新' : '已清空该侧课程');
       $('previewCard').hidden = true;
       state.preview = [];
+      state.editingExisting = false;
       state.imageData = null;
       $('fileInput').value = '';
       await loadRoom();
@@ -330,6 +359,19 @@ function bindPreviewActions() {
       $('confirmBtn').disabled = false;
     }
   });
+}
+
+// 载入某一侧已保存的课程到预览表，可逐条修改/删除后重新保存
+function openSavedEditor() {
+  const side = state[state.role];
+  const list = (side && side.courses) || [];
+  state.editingExisting = true;
+  state.preview = list.map(c => ({ ...c }));
+  $('startDateInput').value = (side && side.startDate) || $('startDateInput').value || '';
+  renderPreview();
+  $('previewCard').hidden = false;
+  $('previewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  toast(list.length ? '已载入' + list.length + ' 条已保存课程，可删除或修改' : '这一侧还没有保存课程，可点「＋ 加一行」手动录入');
 }
 
 // ===== 云端读写 =====

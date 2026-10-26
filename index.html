@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#6d28d9" />
   <title>我们的课表 · 蓝粉双色</title>
-  <link rel="stylesheet" href="./styles.css?v=3" />
+  <link rel="stylesheet" href="./styles.css?v=4" />
 </head>
 <body>
   <header class="topbar">
@@ -20,6 +20,7 @@
   <section class="card">
     <div class="card-head">
       <span>① 上传我的课表截图</span>
+      <button id="editSavedBtn" class="btn-mini">编辑已保存</button>
     </div>
     <div class="role-pick">
       <span class="role-label">这份课表属于：</span>
@@ -48,18 +49,23 @@
   <section class="card" id="previewCard" hidden>
     <div class="card-head">
       <span>② 核对识别结果</span>
-      <button id="addRowBtn" class="btn-mini">＋ 加一行</button>
+      <div class="head-actions">
+        <button id="clearAllBtn" class="btn-mini danger">清空全部</button>
+        <button id="addRowBtn" class="btn-mini">＋ 加一行</button>
+      </div>
     </div>
     <div class="table-wrap">
       <table class="edit-table">
         <thead>
           <tr>
-            <th>课程</th><th>星期</th><th>节起</th><th>节止</th><th>地点</th><th>周起</th><th>周止</th><th>单双</th><th></th>
+            <th class="th-del">删</th>
+            <th>课程</th><th>星期</th><th>节起</th><th>节止</th><th>地点</th><th>周起</th><th>周止</th><th>单双</th>
           </tr>
         </thead>
         <tbody id="previewBody"></tbody>
       </table>
     </div>
+    <p class="hint">左侧红色 ✕ 可直接删掉识别错的课；改完点下面「保存并合并」。</p>
     <div class="preview-actions">
       <button id="confirmBtn" class="btn-primary">保存并合并</button>
       <button id="cancelBtn" class="btn-ghost">取消</button>
@@ -98,11 +104,11 @@
       <span class="dot both"></span>都上课
       <span class="dot free"></span>都空闲
     </p>
-    <p class="version">v3 · 节次按行号对齐 · 连堂修复</p>
+    <p class="version">v4 · 可删除/编辑已保存课程</p>
   </section>
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./app.js?v=3"></script>
+  <script src="./app.js?v=4"></script>
 </body>
 </html>
