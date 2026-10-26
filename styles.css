@@ -112,6 +112,8 @@ button { font-family: inherit; cursor: pointer; border: none; }
 .edit-table th.th-del { background: #f8fafc; font-weight: 600; }
 .edit-table td.td-del { background: #fff; box-shadow: 2px 0 4px -2px rgba(15, 23, 42, .12); }
 .edit-table .empty-row { color: var(--muted); font-size: 12px; padding: 14px 6px; }
+.shift-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.shift-btn { background: #f1f5f9; color: var(--ink); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
 .preview-actions { display: flex; gap: 10px; margin-top: 12px; }
 
 /* 合并课表 */

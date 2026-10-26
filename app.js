@@ -214,8 +214,15 @@ function bindUpload() {
 
   $('recognizeBtn').addEventListener('click', async () => {
     if (!state.imageData) return;
-    $('recognizeBtn').disabled = true;
-    $('recognizeBtn').textContent = '识别中…';
+    const btn = $('recognizeBtn');
+    btn.disabled = true;
+    btn.textContent = '识别中…';
+    // 两遍识别比较慢，过一会儿给个进度提示，避免以为卡死
+    let phase = 0;
+    const timer = setInterval(() => {
+      phase++;
+      btn.textContent = phase === 1 ? '正在核对星期…' : '还在核对，请稍等…';
+    }, 9000);
     try {
       const resp = await fetch('/api/recognize', {
         method: 'POST',
@@ -230,13 +237,15 @@ function bindUpload() {
       state.preview = data.courses.map(normCourse);
       state.editingExisting = false; // 新识别的结果，不属于「已保存课表」
       renderPreview();
-      toast('识别完成，请核对后保存');
+      const fixed = data.verified ? (data.changed > 0 ? `，已自动校正 ${data.changed} 处星期/节次` : '，星期已复核') : '';
+      toast('识别完成' + fixed + '，请核对后保存');
     } catch (e) {
       toast('识别失败：' + e.message + '（可手动添加）');
       if (!state.preview.length) { state.preview = [emptyCourse()]; renderPreview(); }
     } finally {
-      $('recognizeBtn').disabled = false;
-      $('recognizeBtn').textContent = '识别课表';
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = '识别课表';
     }
   });
 }
@@ -312,6 +321,17 @@ function bindPreviewActions() {
 
   // 编辑已保存的课表（识别的课存错了也能在这里删掉）
   $('editSavedBtn').addEventListener('click', openSavedEditor);
+
+  // 整表星期错位时一键平移（比如整体被读到了后一天）
+  document.querySelectorAll('.shift-btn[data-shift]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!state.preview.length) { toast('还没有课程'); return; }
+      const d = parseInt(b.dataset.shift, 10) || 0;
+      state.preview.forEach(c => { c.day = ((c.day - 1 + d + 7) % 7) + 1; });
+      renderPreview();
+      toast(d > 0 ? '全部课程已推后一天' : '全部课程已提前一天');
+    });
+  });
 
   $('cancelBtn').addEventListener('click', () => {
     $('previewCard').hidden = true;
