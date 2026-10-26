@@ -193,6 +193,9 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (wantRaw) {
+      // 模型偶尔会把同一天里靠下的一块提前/推后写，但起始节往往还是对的；
+      // 按「起始节」做一次稳定排序（同一起始节保持模型原始先后）就能自我纠正
+      first = orderByStart(first);
       return json({
         courses: first, model: usedModel, verified: false, changed: 0, raw: true,
         expect, rescanned,
@@ -277,6 +280,13 @@ function extractPayload(text) {
     }
   }
   return { items: extractJsonArray(s) || [], headerDates: [] };
+}
+
+// 按「起始节」稳定排序。只有全部条目都读到了起始节才排，
+// 否则（模型没给节次）保持模型原始顺序 —— 那个顺序本身通常也是对的。
+function orderByStart(list) {
+  if (!list.length || !list.every(c => c.start >= 1)) return list;
+  return list.slice().sort((a, b) => a.start - b.start);
 }
 
 function firstArray(v) {
