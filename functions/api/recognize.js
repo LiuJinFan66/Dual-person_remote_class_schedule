@@ -1,7 +1,7 @@
 // Cloudflare Pages Function: /api/recognize
 // 接收 base64 图片，调用智谱 GLM-4V-Flash 识别课表，返回结构化课程数组
 
-const PROMPT = `这是一张大学课程表截图。请识别并仅输出一个 JSON 数组，每个元素含字段：name(课程名)、day(星期1-7的整数)、start(开始节次整数)、end(结束节次整数)、loc(上课地点)、teacher(教师，未知留空)、week(周次类型: all/odd/even，依据"单周/双周/单双周"判断，无说明则为 all)。不要输出多余解释，只输出 JSON。`;
+const PROMPT = `这是一张大学课程表截图。请识别并仅输出一个 JSON 数组，每个元素含字段：name(课程名)、day(星期1-7的整数)、start(开始节次整数)、end(结束节次整数)、loc(上课地点)、teacher(教师，未知留空)、weekStart(起始周整数，未知默认1)、weekEnd(结束周整数，未知默认16)、weekType(周次类型: 全周=all、单周=odd、双周=even，无说明则为 all)。周次依据截图里的"1-16周""3-8周""单周""双周""1-16周(单)"等文字判断，例如"3-8周"则 weekStart=3,weekEnd=8,weekType=all。不要输出多余解释，只输出 JSON。`;
 
 export async function onRequestPost({ request, env }) {
   try {

@@ -1,7 +1,7 @@
 // Cloudflare Pages Function: /api/room
-// 用 Cloudflare KV 按 roomId 存两人课表（蓝/粉）
-// GET  /api/room?room=xxx  -> { blue:[...], pink:[...] }
-// POST /api/room           -> { room, side:'blue'|'pink', courses:[...] }
+// 用 Cloudflare KV 按 roomId 存两人课表：每侧 = { startDate, courses }
+// GET  /api/room?room=xxx  -> { blue:{startDate,courses}, pink:{startDate,courses} }
+// POST /api/room           -> { room, side:'blue'|'pink', startDate, courses }
 
 export async function onRequest({ request, env }) {
   if (request.method === 'GET') return handleGet(request, env);
@@ -15,7 +15,10 @@ async function handleGet(request, env) {
   if (!room) return json({ error: '缺少 room 参数' }, 400);
   const raw = await env.SCHEDULE_KV.get(room);
   const data = raw ? safeParse(raw) : null;
-  return json({ blue: (data && data.blue) || [], pink: (data && data.pink) || [] });
+  return json({
+    blue: normalizeSide(data && data.blue),
+    pink: normalizeSide(data && data.pink),
+  });
 }
 
 async function handlePost(request, env) {
@@ -25,18 +28,32 @@ async function handlePost(request, env) {
   } catch {
     return json({ error: '请求体不是合法 JSON' }, 400);
   }
-  const { room, side, courses } = body;
+  const { room, side, startDate, courses } = body;
   if (!room || !['blue', 'pink'].includes(side)) {
     return json({ error: '参数错误：需要 room 与 side(blue|pink)' }, 400);
   }
   const raw = await env.SCHEDULE_KV.get(room);
-  const data = raw ? safeParse(raw) : { blue: [], pink: [] };
-  data.blue = data.blue || [];
-  data.pink = data.pink || [];
-  data[side] = Array.isArray(courses) ? courses : [];
-  data.updatedAt = Date.now();
-  await env.SCHEDULE_KV.put(room, JSON.stringify(data));
+  const data = raw ? safeParse(raw) : null;
+  const next = {
+    blue: normalizeSide(data && data.blue),
+    pink: normalizeSide(data && data.pink),
+    updatedAt: Date.now(),
+  };
+  next[side] = {
+    startDate: startDate || null,
+    courses: Array.isArray(courses) ? courses : [],
+  };
+  await env.SCHEDULE_KV.put(room, JSON.stringify(next));
   return json({ ok: true });
+}
+
+// 兼容旧结构：旧版直接存数组 [course,...]
+function normalizeSide(v) {
+  if (Array.isArray(v)) return { startDate: null, courses: v };
+  if (v && typeof v === 'object') {
+    return { startDate: v.startDate || null, courses: Array.isArray(v.courses) ? v.courses : [] };
+  }
+  return { startDate: null, courses: [] };
 }
 
 function safeParse(s) {

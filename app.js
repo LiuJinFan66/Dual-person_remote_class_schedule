@@ -6,35 +6,70 @@ const SLOTS = [
   { n: 10, t: '19:55' }, { n: 11, t: '20:50' }, { n: 12, t: '21:45' },
 ];
 const DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-const WEEK_OPTS = ['all', 'odd', 'even'];
+const WEEK_TYPES = ['all', 'odd', 'even'];
 
 // ===== 状态 =====
 const state = {
   roomId: '',
   role: 'blue',
-  blue: [],
-  pink: [],
+  blue: { startDate: null, courses: [] },
+  pink: { startDate: null, courses: [] },
   showBlue: true,
   showPink: true,
-  week: 'all',
+  viewDate: todayStr(),
   preview: [],
   imageData: null,
 };
 
-// ===== 工具 =====
+// ===== 通用工具 =====
 function $(id) { return document.getElementById(id); }
 function toast(msg) {
   const el = $('toast');
   el.textContent = msg;
   el.hidden = false;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => { el.hidden = true; }, 2200);
+  toast._t = setTimeout(() => { el.hidden = true; }, 2400);
+}
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function randRoom() {
   const s = 'abcdefghijkmnpqrstuvwxyz23456789';
   let r = '';
   for (let i = 0; i < 6; i++) r += s[Math.floor(Math.random() * s.length)];
   return r;
+}
+
+// ===== 日期工具 =====
+function pad(n) { return String(n).padStart(2, '0'); }
+function fmtDate(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function todayStr() { return fmtDate(new Date()); }
+function parseDate(s) {
+  if (!s) return null;
+  const p = String(s).split('-').map(Number);
+  if (p.length !== 3 || p.some(isNaN)) return null;
+  return new Date(p[0], p[1] - 1, p[2]);
+}
+function mondayOf(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const wd = (x.getDay() + 6) % 7; // 0=周一
+  x.setDate(x.getDate() - wd);
+  return x;
+}
+function addDays(d, n) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() + n);
+  return x;
+}
+function md(d) { return (d.getMonth() + 1) + '/' + d.getDate(); }
+// 真实日期 -> 该侧的教学周次（1 起）；未设开学日期返回 null
+function teachingWeek(startDateStr, viewDateStr) {
+  const s = parseDate(startDateStr);
+  const v = parseDate(viewDateStr);
+  if (!s || !v) return null;
+  const sm = mondayOf(s).getTime();
+  const vm = mondayOf(v).getTime();
+  return Math.round((vm - sm) / (86400000 * 7)) + 1;
 }
 
 // ===== 房间 =====
@@ -49,7 +84,6 @@ function initRoom() {
   state.roomId = r;
   $('roomId').textContent = r;
 }
-
 async function shareRoom() {
   const url = location.origin + location.pathname + '?r=' + state.roomId;
   try {
@@ -67,8 +101,44 @@ function bindRole() {
       document.querySelectorAll('.seg-btn[data-role]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.role = btn.dataset.role;
+      // 切换身份时，带出该侧已保存的开学日期
+      $('startDateInput').value = state[state.role].startDate || '';
     });
   });
+}
+
+// ===== 课程数据结构 =====
+function emptyCourse() {
+  return { name: '', day: 1, start: 1, end: 2, loc: '', teacher: '', weekStart: 1, weekEnd: 16, weekType: 'all' };
+}
+function clampInt(v, min, max, dflt) {
+  const n = parseInt(v, 10);
+  if (isNaN(n)) return dflt;
+  return Math.max(min, Math.min(max, n));
+}
+function normCourse(c) {
+  // 兼容旧数据：旧版只有 week(all/odd/even)
+  let weekType = c.weekType || c.week || 'all';
+  if (!WEEK_TYPES.includes(weekType)) weekType = 'all';
+  let ws = clampInt(c.weekStart, 1, 30, 1);
+  let we = clampInt(c.weekEnd, 1, 30, 16);
+  if (we < ws) we = ws;
+  return {
+    name: String(c.name || '').trim(),
+    day: clampInt(c.day, 1, 7, 1),
+    start: clampInt(c.start, 1, 12, 1),
+    end: clampInt(c.end, 1, 12, 2),
+    loc: String(c.loc || c.location || '').trim(),
+    teacher: String(c.teacher || '').trim(),
+    weekStart: ws,
+    weekEnd: we,
+    weekType,
+  };
+}
+function normalizeSide(v) {
+  if (Array.isArray(v)) return { startDate: null, courses: v.map(normCourse) };
+  if (v && typeof v === 'object') return { startDate: v.startDate || null, courses: (v.courses || []).map(normCourse) };
+  return { startDate: null, courses: [] };
 }
 
 // ===== 上传与识别 =====
@@ -112,26 +182,6 @@ function bindUpload() {
   });
 }
 
-function emptyCourse() {
-  return { name: '', day: 1, start: 1, end: 2, loc: '', teacher: '', week: 'all' };
-}
-function normCourse(c) {
-  return {
-    name: String(c.name || '').trim(),
-    day: clampInt(c.day, 1, 7, 1),
-    start: clampInt(c.start, 1, 12, 1),
-    end: clampInt(c.end, 1, 12, 2),
-    loc: String(c.loc || c.location || '').trim(),
-    teacher: String(c.teacher || '').trim(),
-    week: WEEK_OPTS.includes(c.week) ? c.week : 'all',
-  };
-}
-function clampInt(v, min, max, dflt) {
-  const n = parseInt(v, 10);
-  if (isNaN(n)) return dflt;
-  return Math.max(min, Math.min(max, n));
-}
-
 // ===== 预览表格（可编辑）=====
 function renderPreview() {
   const card = $('previewCard');
@@ -146,14 +196,17 @@ function renderPreview() {
       <td><input data-i="${i}" data-k="start" type="number" min="1" max="12" value="${c.start}"/></td>
       <td><input data-i="${i}" data-k="end" type="number" min="1" max="12" value="${c.end}"/></td>
       <td><input data-i="${i}" data-k="loc" value="${esc(c.loc)}" placeholder="地点"/></td>
-      <td><select data-i="${i}" data-k="week">${WEEK_OPTS.map(w => `<option value="${w}" ${c.week === w ? 'selected' : ''}>${weekLabel(w)}</option>`).join('')}</select></td>
+      <td><input data-i="${i}" data-k="weekStart" type="number" min="1" max="30" value="${c.weekStart}"/></td>
+      <td><input data-i="${i}" data-k="weekEnd" type="number" min="1" max="30" value="${c.weekEnd}"/></td>
+      <td><select data-i="${i}" data-k="weekType">${WEEK_TYPES.map(w => `<option value="${w}" ${c.weekType === w ? 'selected' : ''}>${weekLabel(w)}</option>`).join('')}</select></td>
       <td><button class="row-del" data-del="${i}">✕</button></td>`;
     body.appendChild(tr);
   });
+  const intKeys = ['day', 'start', 'end', 'weekStart', 'weekEnd'];
   body.querySelectorAll('input,select').forEach(el => {
     el.addEventListener('change', () => {
       const i = +el.dataset.i, k = el.dataset.k;
-      state.preview[i][k] = (k === 'day' || k === 'start' || k === 'end') ? parseInt(el.value, 10) : el.value;
+      state.preview[i][k] = intKeys.includes(k) ? parseInt(el.value, 10) : el.value;
     });
   });
   body.querySelectorAll('.row-del').forEach(b => {
@@ -164,7 +217,16 @@ function renderPreview() {
   });
 }
 function weekLabel(w) { return w === 'all' ? '全周' : w === 'odd' ? '单周' : '双周'; }
-function esc(s) { return String(s).replace(/"/g, '&quot;'); }
+
+// ===== 保存 =====
+async function postSide(side, startDate, courses) {
+  const resp = await fetch('/api/room', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ room: state.roomId, side, startDate: startDate || null, courses }),
+  });
+  if (!resp.ok) throw new Error((await resp.json()).error || '保存失败');
+}
 
 function bindPreviewActions() {
   $('addRowBtn').addEventListener('click', () => {
@@ -178,19 +240,28 @@ function bindPreviewActions() {
     state.imageData = null;
     $('fileInput').value = '';
     $('recognizeBtn').disabled = true;
-    $('uploadHint').textContent = '支持教务系统 / 超级课表的截图，自动识别课程名、时间、地点。';
+    $('uploadHint').textContent = '支持教务系统 / 超级课表的截图，自动识别课程名、星期、节次、周次、地点。';
   });
+
+  // 只改开学日期（已存在该侧课表时即时保存）
+  $('startDateInput').addEventListener('change', async () => {
+    const val = $('startDateInput').value || null;
+    state[state.role].startDate = val;
+    const cur = state[state.role].courses;
+    if (cur && cur.length) {
+      try { await postSide(state.role, val, cur); toast('开学日期已更新'); await loadRoom(); }
+      catch (e) { toast('保存失败：' + e.message); }
+    }
+  });
+
   $('confirmBtn').addEventListener('click', async () => {
     const courses = state.preview.filter(c => c.name);
     if (!courses.length) { toast('没有可保存的课程'); return; }
+    const startDate = $('startDateInput').value || null;
+    if (!startDate) toast('提示：未填开学日期，将按「全周固定」显示');
     $('confirmBtn').disabled = true;
     try {
-      const resp = await fetch('/api/room', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room: state.roomId, side: state.role, courses }),
-      });
-      if (!resp.ok) throw new Error((await resp.json()).error || '保存失败');
+      await postSide(state.role, startDate, courses);
       toast('已保存，合并课表已更新');
       $('previewCard').hidden = true;
       state.preview = [];
@@ -211,8 +282,10 @@ async function loadRoom() {
     const resp = await fetch('/api/room?room=' + encodeURIComponent(state.roomId));
     if (!resp.ok) throw new Error('读取失败');
     const data = await resp.json();
-    state.blue = (data.blue || []).map(normCourse);
-    state.pink = (data.pink || []).map(normCourse);
+    state.blue = normalizeSide(data.blue);
+    state.pink = normalizeSide(data.pink);
+    // 同步当前身份的开学日期输入框
+    if (!$('startDateInput').value) $('startDateInput').value = state[state.role].startDate || '';
     renderGrid();
   } catch (e) {
     toast('同步失败：' + e.message);
@@ -220,27 +293,48 @@ async function loadRoom() {
 }
 
 // ===== 合并网格 =====
-function weekVisible(c) {
-  return state.week === 'all' || c.week === 'all' || c.week === state.week;
+function courseActive(c, tw) {
+  if (tw == null) return true;            // 未设开学日：不过滤周次
+  if (tw < c.weekStart || tw > c.weekEnd) return false;
+  if (c.weekType === 'odd') return tw % 2 === 1;
+  if (c.weekType === 'even') return tw % 2 === 0;
+  return true;
 }
-function courseAt(list, day, slot) {
-  if (!state.showBlue && list === state.blue) return null;
-  if (!state.showPink && list === state.pink) return null;
-  return list.find(c => c.day === day && weekVisible(c) && slot >= c.start && slot <= c.end) || null;
+function findCourse(person, day, period, tw, visible) {
+  if (!visible) return null;
+  return person.courses.find(c => c.day === day && period >= c.start && period <= c.end && courseActive(c, tw)) || null;
+}
+function cell(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'cell ' + cls;
+  d.innerHTML = html;
+  return d;
 }
 function renderGrid() {
   const grid = $('scheduleGrid');
   grid.innerHTML = '';
-  // 表头
+  const vd = parseDate(state.viewDate) || new Date();
+  const monday = mondayOf(vd);
+  const today = todayStr();
+
+  const twB = teachingWeek(state.blue.startDate, state.viewDate);
+  const twP = teachingWeek(state.pink.startDate, state.viewDate);
+
+  // 表头：周一..周日 + 真实日期
   grid.appendChild(cell('head', '节'));
-  DAYS.forEach(d => grid.appendChild(cell('head', d)));
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(monday, i);
+    const isToday = fmtDate(d) === today;
+    grid.appendChild(cell('head' + (isToday ? ' today' : ''), DAYS[i] + '<br><span class="date">' + md(d) + '</span>'));
+  }
+
   // 时间行
   SLOTS.forEach(s => {
     grid.appendChild(cell('time', s.n + '<br>' + s.t));
-    DAYS.forEach((_, di) => {
-      const day = di + 1;
-      const b = courseAt(state.blue, day, s.n);
-      const p = courseAt(state.pink, day, s.n);
+    for (let i = 0; i < 7; i++) {
+      const day = i + 1;
+      const b = findCourse(state.blue, day, s.n, twB, state.showBlue);
+      const p = findCourse(state.pink, day, s.n, twP, state.showPink);
       let cls = 'empty', inner = '';
       if (b && p) {
         cls = 'both';
@@ -253,30 +347,38 @@ function renderGrid() {
         inner = `<span class="cname">${esc(p.name)}</span>${p.loc ? `<span class="cloc">${esc(p.loc)}</span>` : ''}`;
       }
       grid.appendChild(cell(cls, inner));
-    });
+    }
   });
-}
-function cell(cls, html) {
-  const d = document.createElement('div');
-  d.className = 'cell ' + cls;
-  d.innerHTML = html;
-  return d;
+
+  // 顶部信息
+  $('rangeText').textContent = md(monday) + ' 周一 – ' + md(addDays(monday, 6)) + ' 周日';
+  $('badgeBlue').textContent = twB == null ? '蓝 · 未设开学日' : '蓝 · 第' + twB + '周';
+  $('badgePink').textContent = twP == null ? '粉 · 未设开学日' : '粉 · 第' + twP + '周';
 }
 
 // ===== 视图控制 =====
+function setViewDate(s) {
+  state.viewDate = s;
+  $('viewDate').value = s;
+  renderGrid();
+}
 function bindControls() {
   $('shareBtn').addEventListener('click', shareRoom);
   $('refreshBtn').addEventListener('click', loadRoom);
   $('tgBlue').addEventListener('change', e => { state.showBlue = e.target.checked; renderGrid(); });
   $('tgPink').addEventListener('change', e => { state.showPink = e.target.checked; renderGrid(); });
-  document.querySelectorAll('.seg-btn[data-week]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.seg-btn[data-week]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.week = btn.dataset.week;
-      renderGrid();
-    });
+
+  $('viewDate').value = state.viewDate;
+  $('viewDate').addEventListener('change', e => { if (e.target.value) setViewDate(e.target.value); });
+  $('prevWeek').addEventListener('click', () => {
+    const d = parseDate(state.viewDate) || new Date();
+    setViewDate(fmtDate(addDays(d, -7)));
   });
+  $('nextWeek').addEventListener('click', () => {
+    const d = parseDate(state.viewDate) || new Date();
+    setViewDate(fmtDate(addDays(d, 7)));
+  });
+  $('todayBtn').addEventListener('click', () => setViewDate(todayStr()));
 }
 
 // ===== 启动 =====

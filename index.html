@@ -16,7 +16,7 @@
     </div>
   </header>
 
-  <!-- 上传 / 识别 -->
+  <!-- ① 上传 / 识别 -->
   <section class="card">
     <div class="card-head">
       <span>① 上传我的课表截图</span>
@@ -28,6 +28,12 @@
         <button class="seg-btn pink" data-role="pink">粉（对象）</button>
       </div>
     </div>
+    <div class="date-set">
+      <label>本学期第1周周一：
+        <input type="date" id="startDateInput" />
+      </label>
+      <span class="hint-inline">用于把「第N周」换算成真实日期</span>
+    </div>
     <div class="upload-row">
       <label class="file-btn">
         <input type="file" id="fileInput" accept="image/*" hidden />
@@ -35,10 +41,10 @@
       </label>
       <button id="recognizeBtn" class="btn-primary" disabled>识别课表</button>
     </div>
-    <p id="uploadHint" class="hint">支持教务系统 / 超级课表的截图，自动识别课程名、时间、地点。</p>
+    <p id="uploadHint" class="hint">支持教务系统 / 超级课表的截图，自动识别课程名、星期、节次、周次、地点。</p>
   </section>
 
-  <!-- 识别结果预览（可编辑） -->
+  <!-- ② 识别结果预览（可编辑） -->
   <section class="card" id="previewCard" hidden>
     <div class="card-head">
       <span>② 核对识别结果</span>
@@ -48,7 +54,7 @@
       <table class="edit-table">
         <thead>
           <tr>
-            <th>课程</th><th>星期</th><th>开始节</th><th>结束节</th><th>地点</th><th>周次</th><th></th>
+            <th>课程</th><th>星期</th><th>节起</th><th>节止</th><th>地点</th><th>周起</th><th>周止</th><th>单双</th><th></th>
           </tr>
         </thead>
         <tbody id="previewBody"></tbody>
@@ -60,7 +66,7 @@
     </div>
   </section>
 
-  <!-- 合并课表 -->
+  <!-- ③ 合并课表 -->
   <section class="card">
     <div class="card-head">
       <span>③ 合并周课表</span>
@@ -69,15 +75,20 @@
         <label class="tg pink"><input type="checkbox" id="tgPink" checked /> 粉</label>
       </div>
     </div>
-    <div class="week-pick">
-      <span>显示周次：</span>
-      <div class="seg small">
-        <button class="seg-btn active" data-week="all">全周</button>
-        <button class="seg-btn" data-week="odd">单周</button>
-        <button class="seg-btn" data-week="even">双周</button>
-      </div>
-      <button id="refreshBtn" class="btn-mini" title="立即同步">↻</button>
+
+    <div class="date-bar">
+      <button id="prevWeek" class="btn-icon" title="上一周">‹</button>
+      <input type="date" id="viewDate" class="date-input" />
+      <button id="nextWeek" class="btn-icon" title="下一周">›</button>
+      <button id="todayBtn" class="btn-mini2">本周</button>
+      <button id="refreshBtn" class="btn-mini2" title="立即同步">↻</button>
     </div>
+    <div class="week-info">
+      <span id="rangeText" class="range"></span>
+      <span id="badgeBlue" class="badge blue">蓝</span>
+      <span id="badgePink" class="badge pink">粉</span>
+    </div>
+
     <div class="grid-wrap">
       <div id="scheduleGrid" class="schedule-grid"></div>
     </div>
