@@ -19,6 +19,7 @@ const state = {
   viewDate: todayStr(),
   preview: [],
   imageData: null,
+  grid: null,             // 像素几何检测结果（星期/节次以它为准）
   editingExisting: false, // true = 正在编辑已保存的课表（允许保存空列表 = 清空）
 };
 
@@ -208,10 +209,12 @@ function bindUpload() {
     const file = input.files && input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       state.imageData = reader.result;
+      state.grid = null;
+      $('uploadHint').textContent = '已选择：' + file.name;
+      await detectGrid();            // 先把像素定位做完，再允许点识别
       $('recognizeBtn').disabled = false;
-      $('uploadHint').textContent = '已选择：' + file.name + '（点击「识别课表」）';
     };
     reader.readAsDataURL(file);
   });
@@ -231,7 +234,7 @@ function bindUpload() {
       const resp = await fetch('/api/recognize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: state.imageData }),
+        body: JSON.stringify({ image: state.imageData, raw: true }),
       });
       const data = await resp.json();
       if (!resp.ok || !data.courses) {
@@ -240,10 +243,17 @@ function bindUpload() {
       }
       state.preview = data.courses.map(normCourse);
       state.editingExisting = false; // 新识别的结果，不属于「已保存课表」
+      const px = applyPixelGrid(state.preview, state.grid);
       renderPreview();
-      const fixed = data.verified ? (data.changed > 0 ? `，已自动校正 ${data.changed} 处` : '，已复核') : '';
-      const conf = data.conflicts > 0 ? `；${data.conflicts} 行星期读数不一致已标 ⚠，请重点核对` : '';
-      toast('识别完成' + fixed + conf + '，确认后保存');
+      let msg;
+      if (px.mode === 'none') {
+        msg = '识别完成（像素定位不可用，星期节次为 AI 读数，请核对）';
+      } else if (px.mode === 'mismatch') {
+        msg = `识别完成，但像素检出 ${state.grid.blocks.length} 块 / 识别出 ${state.preview.length} 条，对不上，位置用 AI 读数，请核对`;
+      } else {
+        msg = `识别完成，${px.applied} 条位置由像素精确定位`;
+      }
+      toast(msg + '，确认后保存');
     } catch (e) {
       toast('识别失败：' + e.message + '（可手动添加）');
       if (!state.preview.length) { state.preview = [emptyCourse()]; renderPreview(); }
@@ -253,6 +263,47 @@ function bindUpload() {
       btn.textContent = '识别课表';
     }
   });
+}
+
+// ===== 像素几何：星期/节次由图片像素算出，模型只提供文字 =====
+async function detectGrid() {
+  const hint = $('gridHint');
+  hint.hidden = false;
+  hint.textContent = '正在用像素定位表格…';
+  try {
+    if (!window.GridDetect) throw new Error('grid.js 未加载');
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('图片解码失败'));
+      i.src = state.imageData;
+    });
+    const maxW = 1400;
+    const scale = Math.min(1, maxW / (img.naturalWidth || maxW));
+    const w = Math.max(1, Math.round((img.naturalWidth || maxW) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || maxW) * scale));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const g = window.GridDetect.detect(px, w, h);
+    state.grid = g;
+    if (g.ok) {
+      hint.textContent = `像素定位成功：7 列 × ${g.rows.length} 节，检出 ${g.blocks.length} 个课块（星期/节次以像素为准）`;
+    } else {
+      hint.textContent = `像素定位未成功（${g.reason}），星期/节次将用 AI 读数`;
+    }
+  } catch (e) {
+    state.grid = null;
+    hint.textContent = '像素定位不可用（' + (e.message || e) + '），星期/节次将用 AI 读数';
+  }
+}
+
+// 把模型给的文字按输出顺序贴到像素检出的色块上（实现在 grid.js，便于单测）
+function applyPixelGrid(courses, grid) {
+  if (!window.GridDetect || !window.GridDetect.applyToCourses) return { applied: 0, mode: 'none' };
+  return window.GridDetect.applyToCourses(courses, grid);
 }
 
 // ===== 预览表格（可编辑）=====

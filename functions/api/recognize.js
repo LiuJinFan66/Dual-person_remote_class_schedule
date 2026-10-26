@@ -52,7 +52,8 @@ const PROMPT_MAIN = `这是一张中国大学的周课表截图。请先抄表�
 2. 节次只认左侧行号，绝不把上课时间当节次。
 3. rows 必须完整覆盖色块高度。
 4. 每个有课的块都要一条；同课名在不同星期或不同节次，分别输出。
-5. 只输出 JSON 对象，不要解释、不要 markdown 代码块。
+5. 【输出顺序很重要】必须先按色块最上面那一行的行号从小到大排；行号相同的，从左到右排（周一在左、周日在右）。这个顺序会被用来和课表版式一一对应，顺序错了整张表就会串位。
+6. 只输出 JSON 对象，不要解释、不要 markdown 代码块。
 
 格式：
 {"headerDates":["26","27","28","29","30","31","1"],
@@ -96,13 +97,15 @@ export async function onRequestPost({ request, env }) {
     if (!key) {
       return json({ error: '服务端未配置 ZHIPUAI_API_KEY，请在环境变量中设置' }, 500);
     }
+    // raw=true：前端已用像素定位星期/节次，这里只要文字，且必须保持模型输出的原始顺序（用于按序配对）
+    const wantRaw = body.raw === true;
 
     // ===== 第 1 遍：抽取 =====
     let first = null, headerDates = [], usedModel = '', lastDetail = '';
     for (const model of MODELS) {
       try {
         const payload = await callModel(model, key, PROMPT_MAIN, image);
-        const courses = buildCourses(payload.items, payload.headerDates);
+        const courses = buildCourses(payload.items, payload.headerDates, { noMerge: wantRaw });
         if (courses.length) {
           first = courses;
           headerDates = payload.headerDates;
@@ -116,6 +119,10 @@ export async function onRequestPost({ request, env }) {
     }
     if (!first) {
       return json({ error: '识别失败：模型未返回可解析的课程数据', detail: lastDetail }, 502);
+    }
+
+    if (wantRaw) {
+      return json({ courses: first, model: usedModel, verified: false, changed: 0, raw: true });
     }
 
     // ===== 第 2 遍：核对星期与行数（失败则沿用第 1 遍）=====
@@ -235,7 +242,8 @@ function extractJsonObject(text) {
 
 // ===== 把模型的原始输出整理成课程 =====
 
-function buildCourses(raw, headerDates) {
+function buildCourses(raw, headerDates, opts) {
+  const noMerge = !!(opts && opts.noMerge);
   const hdr = (headerDates || []).map(normDateNum);
   const flat = [];
   for (const item of raw) {
@@ -260,6 +268,29 @@ function buildCourses(raw, headerDates) {
       weekType: wk.type,
     });
   }
+
+  const shape = (c) => {
+    const rows = [];
+    for (let i = c.min; i <= c.max; i++) rows.push(i);
+    return {
+      name: c.name,
+      day: c.day,
+      dayChar: c.dayChar,
+      colDate: c.colDate,
+      dayConflict: c.dayConflict,
+      rows,
+      start: c.min,
+      end: c.max,
+      loc: c.loc,
+      teacher: c.teacher,
+      weekStart: c.weekStart,
+      weekEnd: c.weekEnd,
+      weekType: c.weekType,
+    };
+  };
+
+  // raw 模式：保持模型输出的先后顺序，不合并不排序（前端要按顺序和像素色块一一配对）
+  if (noMerge) return flat.map(shape);
 
   // 同一门课在同一天可能被拆成相邻两块（[5,6] + [7,8]），合并回 5-8
   const buckets = new Map();
@@ -291,25 +322,7 @@ function buildCourses(raw, headerDates) {
   }
 
   merged.sort((a, b) => a.day - b.day || a.min - b.min);
-  return merged.map(c => {
-    const rows = [];
-    for (let i = c.min; i <= c.max; i++) rows.push(i);
-    return {
-      name: c.name,
-      day: c.day,
-      dayChar: c.dayChar,
-      colDate: c.colDate,
-      dayConflict: c.dayConflict,
-      rows,
-      start: c.min,
-      end: c.max,
-      loc: c.loc,
-      teacher: c.teacher,
-      weekStart: c.weekStart,
-      weekEnd: c.weekEnd,
-      weekType: c.weekType,
-    };
-  });
+  return merged.map(shape);
 }
 
 // 三路读数投票：colDate→列号、dayChar→列号、day 数字

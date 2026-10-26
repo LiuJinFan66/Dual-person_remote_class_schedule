@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#6d28d9" />
   <title>我们的课表 · 蓝粉双色</title>
-  <link rel="stylesheet" href="./styles.css?v=6" />
+  <link rel="stylesheet" href="./styles.css?v=7" />
 </head>
 <body>
   <header class="topbar">
@@ -43,6 +43,7 @@
       <button id="recognizeBtn" class="btn-primary" disabled>识别课表</button>
     </div>
     <p id="uploadHint" class="hint">支持教务系统 / 超级课表的截图，自动识别课程名、星期、节次、周次、地点。</p>
+    <p id="gridHint" class="hint" hidden></p>
   </section>
 
   <!-- ② 识别结果预览（可编辑） -->
@@ -119,11 +120,12 @@
       <span class="dot both"></span>都上课
       <span class="dot free"></span>都空闲
     </p>
-    <p class="version">v6 · 表头日期锚点 + 三路投票</p>
+    <p class="version">v7 · 像素定位星期节次</p>
   </section>
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./app.js?v=6"></script>
+  <script src="./grid.js?v=1"></script>
+  <script src="./app.js?v=7"></script>
 </body>
 </html>
