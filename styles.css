@@ -36,7 +36,7 @@ body {
 }
 .topbar .title { font-weight: 700; font-size: 16px; }
 .room { display: flex; align-items: center; gap: 8px; }
-.room-id { font-size: 12px; opacity: .9; letter-spacing: .5px; }
+.room-id { font-size: 12px; opacity: .9; letter-spacing: .5px; cursor: pointer; border-bottom: 1px dashed rgba(255,255,255,.6); }
 
 .card {
   background: var(--card);

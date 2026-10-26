@@ -78,13 +78,30 @@ function teachingWeek(startDateStr, viewDateStr) {
 function initRoom() {
   const params = new URLSearchParams(location.search);
   let r = params.get('r');
+  let remembered = '';
+  try { remembered = localStorage.getItem('roomId') || ''; } catch (e) { /* 无痕模式可能禁用 */ }
   if (!r) {
-    r = randRoom();
+    // 没有 ?r= 时不能直接造新房间，否则用户每次从收藏夹/首页进来都换房间、课表看着像丢了
+    r = remembered || randRoom();
     params.set('r', r);
     history.replaceState(null, '', '?' + params.toString());
   }
+  try { localStorage.setItem('roomId', r); } catch (e) { /* 忽略 */ }
   state.roomId = r;
   $('roomId').textContent = r;
+}
+
+// 手动切换到别的房间号（比如换了设备、或误进了新房间）
+function bindRoomSwitch() {
+  $('roomId').addEventListener('click', () => {
+    const cur = state.roomId;
+    const v = prompt('当前房间号：' + cur + '\n\n想换到另一个房间，请输入房间号（留空保持不变）：', cur);
+    if (v === null) return;
+    const id = v.trim();
+    if (!id || id === cur) return;
+    try { localStorage.setItem('roomId', id); } catch (e) { /* 忽略 */ }
+    location.search = '?r=' + encodeURIComponent(id);
+  });
 }
 async function shareRoom() {
   const url = location.origin + location.pathname + '?r=' + state.roomId;
@@ -417,14 +434,17 @@ function bindPreviewActions() {
     $('uploadHint').textContent = '支持教务系统 / 超级课表的截图，自动识别课程名、星期、节次、周次、地点。';
   });
 
-  // 只改开学日期（已存在该侧课表时即时保存）
+  // 只改开学日期时立即保存（哪怕这一侧还没有课，也要把日期存下来）
   $('startDateInput').addEventListener('change', async () => {
     const val = $('startDateInput').value || null;
     state[state.role].startDate = val;
     const cur = state[state.role].courses;
-    if (cur && cur.length) {
-      try { await postSide(state.role, val, cur); toast('开学日期已更新'); await loadRoom(); }
-      catch (e) { toast('保存失败：' + e.message); }
+    try {
+      // 有课就一起提交；没有课就只递交日期，服务端会保留原有课程不动
+      await postSide(state.role, val, (cur && cur.length) ? cur : undefined);
+      toast(val ? '开学日期已保存（用于换算第N周）' : '开学日期已清空');
+    } catch (e) {
+      toast('开学日期保存失败：' + e.message);
     }
   });
 
@@ -482,8 +502,9 @@ async function loadRoom() {
     const data = await resp.json();
     state.blue = normalizeSide(data.blue);
     state.pink = normalizeSide(data.pink);
-    // 同步当前身份的开学日期输入框
-    if (!$('startDateInput').value) $('startDateInput').value = state[state.role].startDate || '';
+    // 同步当前身份的开学日期输入框（正在编辑时不覆盖）
+    const di = $('startDateInput');
+    if (document.activeElement !== di) di.value = state[state.role].startDate || '';
     renderGrid();
   } catch (e) {
     toast('同步失败：' + e.message);
@@ -549,7 +570,9 @@ function renderGrid() {
   });
 
   // 顶部信息
-  $('rangeText').textContent = md(monday) + ' 周一 – ' + md(addDays(monday, 6)) + ' 周日';
+  const empty = !state.blue.courses.length && !state.pink.courses.length;
+  $('rangeText').textContent = md(monday) + ' 周一 – ' + md(addDays(monday, 6)) + ' 周日'
+    + (empty ? ' · 房间 ' + state.roomId + ' 里还没有课表' : '');
   $('badgeBlue').textContent = twB == null ? '蓝 · 未设开学日' : '蓝 · 第' + twB + '周';
   $('badgePink').textContent = twP == null ? '粉 · 未设开学日' : '粉 · 第' + twP + '周';
 }
@@ -562,6 +585,7 @@ function setViewDate(s) {
 }
 function bindControls() {
   $('shareBtn').addEventListener('click', shareRoom);
+  bindRoomSwitch();
   $('refreshBtn').addEventListener('click', loadRoom);
   $('tgBlue').addEventListener('change', e => { state.showBlue = e.target.checked; renderGrid(); });
   $('tgPink').addEventListener('change', e => { state.showPink = e.target.checked; renderGrid(); });

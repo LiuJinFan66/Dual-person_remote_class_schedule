@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#6d28d9" />
   <title>我们的课表 · 蓝粉双色</title>
-  <link rel="stylesheet" href="./styles.css?v=7" />
+  <link rel="stylesheet" href="./styles.css?v=8" />
 </head>
 <body>
   <header class="topbar">
     <div class="title">我们的课表</div>
     <div class="room">
-      <span id="roomId" class="room-id">----</span>
+      <span id="roomId" class="room-id" title="点一下可切换房间号">----</span>
       <button id="shareBtn" class="btn-mini" title="复制房间链接">分享</button>
     </div>
   </header>
@@ -120,12 +120,12 @@
       <span class="dot both"></span>都上课
       <span class="dot free"></span>都空闲
     </p>
-    <p class="version">v7 · 像素定位星期节次</p>
+    <p class="version">v8 · 房间号记忆 + 开学日期即时保存</p>
   </section>
 
   <div id="toast" class="toast" hidden></div>
 
   <script src="./grid.js?v=1"></script>
-  <script src="./app.js?v=7"></script>
+  <script src="./app.js?v=8"></script>
 </body>
 </html>

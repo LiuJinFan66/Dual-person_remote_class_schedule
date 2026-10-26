@@ -39,9 +39,11 @@ async function handlePost(request, env) {
     pink: normalizeSide(data && data.pink),
     updatedAt: Date.now(),
   };
+  // 支持只更新开学日期：请求里不带 courses 字段时保留原有课程，避免误清空
+  const prev = normalizeSide(data && data[side]);
   next[side] = {
-    startDate: startDate || null,
-    courses: Array.isArray(courses) ? courses : [],
+    startDate: startDate === undefined ? prev.startDate : (startDate || null),
+    courses: Array.isArray(courses) ? courses : prev.courses,
   };
   await env.SCHEDULE_KV.put(room, JSON.stringify(next));
   return json({ ok: true });
