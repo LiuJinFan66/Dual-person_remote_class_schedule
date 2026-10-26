@@ -67,9 +67,10 @@ const PROMPT_MAIN = `这是一张中国大学的周课表截图。请先抄表�
 // 故意不问 rows（节次）——那是模型最容易读错、也最没必要读的东西
 // expect：前端像素已经数出图上共有几个彩色色块，直接告诉模型，条数就几乎不会错
 const PROMPT_RAW = (expect) => `这是一张中国大学的周课表截图。请把每个彩色课块里的课程文字读出来，只输出 JSON。
-${expect > 0 ? `\n【数量】图上用像素扫描出**${expect} 个彩色色块**，所以 courses 数组必须有且只有 ${expect} 条。
+${expect > 0 ? `\n【数量】图上用像素扫描出**${expect} 个彩色色块**，所以 courses 数组应当是 ${expect} 条。
 注意：同一门课（课名一样、颜色一样）在同一列里上下分成两块，那是两个块，要各写一条。
-输出前自己数一遍条数，不足就重新扫描补全，多了就删。\n` : ''}
+但反过来禁止凑数：**不许把一个大色块拆成两条，也不许把同一个色块写两遍**。
+如果你确实只数出更少的块，就按实际数量写，宁可少写也不要编造。\n` : ''}
 【顺序很重要】按色块"最上面那一行的位置"从上到下排；高度相同的，从左到右排（周一在左、周日在右）。
 这个顺序会被程序用来和图片上的色块一一对应，乱了整张表就会串位。
 
@@ -179,17 +180,21 @@ export async function onRequestPost({ request, env }) {
       return json({ error: '识别失败：模型未返回可解析的课程数据', detail: lastDetail }, 502);
     }
 
-    // raw 模式：像素已经数出准确条数，对不上就重扫一遍（同名同色的两块最容易漏）
+    // raw 模式：像素已经数出准确条数。
+    // 两条触发重扫的线：①条数对不上 ②条数对上了但自报的节次顺序乱成一团（多半是凑数/拆块）
     let rescanned = false;
-    if (wantRaw && expect > 0 && first.length !== expect) {
-      try {
-        const p2 = await callModel(usedModel, key, PROMPT_FIX(first.map(c => c.name), expect), image);
-        const c2 = buildCourses(p2.items, [], { noMerge: true });
-        if (c2.length && Math.abs(c2.length - expect) < Math.abs(first.length - expect)) {
-          first = c2;
-          rescanned = true;
-        }
-      } catch { /* 重扫失败就用第一遍 */ }
+    if (wantRaw && expect > 0) {
+      const q1 = disorderOf(first);
+      if (first.length !== expect || q1 > 0.15) {
+        try {
+          const p2 = await callModel(usedModel, key, PROMPT_FIX(first.map(c => c.name), expect), image);
+          const c2 = buildCourses(p2.items, [], { noMerge: true });
+          if (c2.length && betterThan(c2, first, expect)) {
+            first = c2;
+            rescanned = true;
+          }
+        } catch { /* 重扫失败就用第一遍 */ }
+      }
     }
 
     if (wantRaw) {
@@ -277,6 +282,25 @@ function extractPayload(text) {
     }
   }
   return { items: extractJsonArray(s) || [], headerDates: [] };
+}
+
+// 模型的输出是「从上到下」的，自报的起始节理应大致递增。
+// 若大量逆序，说明它在凑条数（把一个大块拆成两条 / 同一个块写两遍），这一遍不可信。
+function disorderOf(list) {
+  const s = list.map(c => c.start).filter(n => n >= 1);
+  if (s.length < list.length * 0.6 || s.length < 2) return 0;
+  let inv = 0, tot = 0;
+  for (let i = 0; i < s.length; i++) {
+    for (let j = i + 1; j < s.length; j++) { tot++; if (s[i] > s[j]) inv++; }
+  }
+  return tot ? inv / tot : 0;
+}
+
+// 两遍结果谁更好：先看条数是否更接近像素数出的色块数，再比起始节的顺序一致性
+function betterThan(a, b, expect) {
+  const ea = Math.abs(a.length - expect), eb = Math.abs(b.length - expect);
+  if (ea !== eb) return ea < eb;
+  return disorderOf(a) < disorderOf(b);
 }
 
 function firstArray(v) {
