@@ -260,6 +260,8 @@ function bindUpload() {
       }
       state.preview = data.courses.map(normCourse);
       state.editingExisting = false; // 新识别的结果，不属于「已保存课表」
+      $('savedBanner').hidden = true;
+      $('confirmBtn').textContent = '保存并合并';
       const px = applyPixelGrid(state.preview, state.grid);
       renderPreview();
       let msg;
@@ -307,9 +309,9 @@ async function detectGrid() {
     const g = window.GridDetect.detect(px, w, h);
     state.grid = g;
     if (g.ok) {
-      hint.textContent = `像素定位成功：7 列 × ${g.rows.length} 节，检出 ${g.blocks.length} 个课块（星期/节次以像素为准）`;
+      hint.textContent = `像素定位成功：7 列 × ${g.nRow} 节，检出 ${g.blocks.length} 个课块（星期/节次以像素为准）`;
     } else {
-      hint.textContent = `像素定位未成功（${g.reason}），星期/节次将用 AI 读数`;
+      hint.textContent = `像素定位未成功（${g.reason}），星期/节次将用 AI 读数，请核对`;
     }
   } catch (e) {
     state.grid = null;
@@ -336,8 +338,8 @@ function renderPreview() {
       <td class="td-del"><button class="row-del" data-del="${i}" title="删除这一行">✕</button></td>
       <td><input data-i="${i}" data-k="name" value="${esc(c.name)}" placeholder="课程名"/></td>
       <td class="day-cell">${c.dayConflict ? '<span class="warn" title="星期读数不一致，请核对这一行">⚠</span>' : ''}<select data-i="${i}" data-k="day">${DAYS.map((d, di) => `<option value="${di + 1}" ${c.day === di + 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></td>
-      <td><input data-i="${i}" data-k="start" type="number" min="1" max="12" value="${c.start}"/></td>
-      <td><input data-i="${i}" data-k="end" type="number" min="1" max="12" value="${c.end}"/></td>
+      <td><input data-i="${i}" data-k="start" type="number" min="1" max="16" value="${c.start}"/></td>
+      <td><input data-i="${i}" data-k="end" type="number" min="1" max="16" value="${c.end}"/></td>
       <td><input data-i="${i}" data-k="loc" value="${esc(c.loc)}" placeholder="地点"/></td>
       <td><input data-i="${i}" data-k="weekStart" type="number" min="1" max="30" value="${c.weekStart}"/></td>
       <td><input data-i="${i}" data-k="weekEnd" type="number" min="1" max="30" value="${c.weekEnd}"/></td>
@@ -404,7 +406,10 @@ function bindPreviewActions() {
   });
 
   // 编辑已保存的课表（识别的课存错了也能在这里删掉）
-  $('editSavedBtn').addEventListener('click', openSavedEditor);
+  $('editSavedBtn').addEventListener('click', () => openSavedEditor());
+  // 合并课表卡片上的两个入口：直接改某一侧的已存课表
+  $('editBlueBtn').addEventListener('click', () => openSavedEditor('blue'));
+  $('editPinkBtn').addEventListener('click', () => openSavedEditor('pink'));
 
   // 星期错位一键平移：可只动某一天，也可整表动
   const shiftBy = (delta) => {
@@ -431,7 +436,10 @@ function bindPreviewActions() {
     state.imageData = null;
     $('fileInput').value = '';
     $('recognizeBtn').disabled = true;
+    $('savedBanner').hidden = true;
+    $('confirmBtn').textContent = '保存并合并';
     $('uploadHint').textContent = '支持教务系统 / 超级课表的截图，自动识别课程名、星期、节次、周次、地点。';
+    if (state.grid) { $('gridHint').hidden = true; state.grid = null; }
   });
 
   // 只改开学日期时立即保存（哪怕这一侧还没有课，也要把日期存下来）
@@ -466,13 +474,17 @@ function bindPreviewActions() {
     $('confirmBtn').disabled = true;
     try {
       await postSide(state.role, startDate, courses);
-      toast(courses.length ? '已保存，合并课表已更新' : '已清空该侧课程');
-      $('previewCard').hidden = true;
-      state.preview = [];
-      state.editingExisting = false;
-      state.imageData = null;
-      $('fileInput').value = '';
       await loadRoom();
+      // 保存后不关闭编辑器：发现错了可以立刻接着改，再点一次「保存修改」覆盖
+      state.editingExisting = true;
+      state.preview = courses.map(c => ({ ...c }));
+      $('confirmBtn').textContent = courses.length ? '保存修改' : '保存并合并';
+      const banner = $('savedBanner');
+      banner.hidden = false;
+      banner.textContent = courses.length
+        ? `✓ 已保存 ${courses.length} 门课。发现哪条不对，直接在上面改或点左侧 ✕ 删掉，改完再点「保存修改」。`
+        : '✓ 已清空这一侧的课程。';
+      toast(courses.length ? '已保存，合并课表已更新' : '已清空该侧课程');
     } catch (e) {
       toast('保存失败：' + e.message);
     } finally {
@@ -482,16 +494,22 @@ function bindPreviewActions() {
 }
 
 // 载入某一侧已保存的课程到预览表，可逐条修改/删除后重新保存
-function openSavedEditor() {
+function openSavedEditor(role) {
+  if (role && role !== state.role) {
+    state.role = role;
+    document.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.role === role));
+  }
   const side = state[state.role];
   const list = (side && side.courses) || [];
   state.editingExisting = true;
   state.preview = list.map(c => ({ ...c }));
   $('startDateInput').value = (side && side.startDate) || $('startDateInput').value || '';
+  $('savedBanner').hidden = true;
+  $('confirmBtn').textContent = list.length ? '保存修改' : '保存并合并';
   renderPreview();
   $('previewCard').hidden = false;
   $('previewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  toast(list.length ? '已载入' + list.length + ' 条已保存课程，可删除或修改' : '这一侧还没有保存课程，可点「＋ 加一行」手动录入');
+  toast(list.length ? '已载入' + list.length + ' 条已保存课程，改完点「保存修改」' : '这一侧还没有保存课程，可点「＋ 加一行」手动录入');
 }
 
 // ===== 云端读写 =====
@@ -548,12 +566,16 @@ function renderGrid() {
   }
 
   // 节次行（只显示节次号，不显示具体时间：两校上课时间可能不同，统一按节次对齐）
-  SLOTS.forEach(s => {
-    grid.appendChild(cell('time', String(s.n)));
+  // 两校节数可能不同（10 / 11 / 12 节），取两边最多的那个
+  let rowCount = 12;
+  for (const c of state.blue.courses) if (c.end > rowCount) rowCount = c.end;
+  for (const c of state.pink.courses) if (c.end > rowCount) rowCount = c.end;
+  for (let n = 1; n <= rowCount; n++) {
+    grid.appendChild(cell('time', String(n)));
     for (let i = 0; i < 7; i++) {
       const day = i + 1;
-      const b = findCourse(state.blue, day, s.n, twB, state.showBlue);
-      const p = findCourse(state.pink, day, s.n, twP, state.showPink);
+      const b = findCourse(state.blue, day, n, twB, state.showBlue);
+      const p = findCourse(state.pink, day, n, twP, state.showPink);
       let cls = 'empty', inner = '';
       if (b && p) {
         cls = 'both';
@@ -567,7 +589,7 @@ function renderGrid() {
       }
       grid.appendChild(cell(cls, inner));
     }
-  });
+  }
 
   // 顶部信息
   const empty = !state.blue.courses.length && !state.pink.courses.length;

@@ -74,6 +74,17 @@ button { font-family: inherit; cursor: pointer; border: none; }
 .hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
 .hint-inline { color: var(--muted); font-size: 11px; }
 
+/* 保存之后的提示条：告诉用户还能继续改 */
+.saved-banner {
+  margin: 10px 0 0; padding: 9px 11px; border-radius: 9px;
+  background: #ecfdf5; color: #047857; font-size: 12px; line-height: 1.5;
+  border: 1px solid #a7f3d0;
+}
+
+/* 合并课表卡片头上的「✎蓝 / ✎粉」比旁边的开关更靠前，给点区分度 */
+#editBlueBtn { background: var(--blue-soft); color: var(--blue); }
+#editPinkBtn { background: var(--pink-soft); color: var(--pink); }
+
 /* 角色选择 */
 .role-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .role-label { color: var(--muted); font-size: 13px; }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#6d28d9" />
   <title>我们的课表 · 蓝粉双色</title>
-  <link rel="stylesheet" href="./styles.css?v=8" />
+  <link rel="stylesheet" href="./styles.css?v=9" />
 </head>
 <body>
   <header class="topbar">
@@ -66,7 +66,8 @@
         <tbody id="previewBody"></tbody>
       </table>
     </div>
-    <p class="hint">左侧红色 ✕ 可删掉识别错的课；带 <span class="warn-inline">⚠</span> 的行是三路读数不一致、建议核对。改完点下面「保存并合并」。</p>
+    <p class="hint">左侧红色 ✕ 可删掉识别错的课；带 <span class="warn-inline">⚠</span> 的行是读数不一致、建议核对。改完点下面「保存并合并」。</p>
+    <p id="savedBanner" class="saved-banner" hidden></p>
     <div class="shift-row">
       <span>星期错位？</span>
       <select id="shiftScope" class="shift-select">
@@ -93,6 +94,8 @@
     <div class="card-head">
       <span>③ 合并周课表</span>
       <div class="toggles">
+        <button id="editBlueBtn" class="btn-mini" title="修改蓝方课表">✎蓝</button>
+        <button id="editPinkBtn" class="btn-mini" title="修改粉方课表">✎粉</button>
         <label class="tg blue"><input type="checkbox" id="tgBlue" checked /> 蓝</label>
         <label class="tg pink"><input type="checkbox" id="tgPink" checked /> 粉</label>
       </div>
@@ -120,12 +123,12 @@
       <span class="dot both"></span>都上课
       <span class="dot free"></span>都空闲
     </p>
-    <p class="version">v8 · 房间号记忆 + 开学日期即时保存</p>
+    <p class="version">v9 · 像素定位重写，适配不同版式</p>
   </section>
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./grid.js?v=1"></script>
-  <script src="./app.js?v=8"></script>
+  <script src="./grid.js?v=2"></script>
+  <script src="./app.js?v=9"></script>
 </body>
 </html>
