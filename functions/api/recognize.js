@@ -67,7 +67,9 @@ const PROMPT_MAIN = `这是一张中国大学的周课表截图。请先抄表�
 // 故意不问 rows（节次）——那是模型最容易读错、也最没必要读的东西
 // expect：前端像素已经数出图上共有几个彩色色块，直接告诉模型，条数就几乎不会错
 const PROMPT_RAW = (expect) => `这是一张中国大学的周课表截图。请把每个彩色课块里的课程文字读出来，只输出 JSON。
-${expect > 0 ? `\n【数量】图上用像素扫描出**${expect} 个彩色色块**，所以 courses 数组必须有且只有 ${expect} 条。写完自己数一遍条数，不够就补，多了就删。\n` : ''}
+${expect > 0 ? `\n【数量】图上用像素扫描出**${expect} 个彩色色块**，所以 courses 数组必须有且只有 ${expect} 条。
+注意：同一门课（课名一样、颜色一样）在同一列里上下分成两块，那是两个块，要各写一条。
+输出前自己数一遍条数，不足就重新扫描补全，多了就删。\n` : ''}
 【顺序很重要】按色块"最上面那一行的位置"从上到下排；高度相同的，从左到右排（周一在左、周日在右）。
 这个顺序会被程序用来和图片上的色块一一对应，乱了整张表就会串位。
 
@@ -92,6 +94,23 @@ ${expect > 0 ? `\n【数量】图上用像素扫描出**${expect} 个彩色色�
 格式：
 {"courses":[{"name":"大学物理实验","dayChar":"三","loc":"物理实验中心-201","teacher":"","weekStart":3,"weekEnd":8,"weekType":"all"},
             {"name":"大学英语","dayChar":"五","loc":"5教-302","teacher":"","weekStart":1,"weekEnd":16,"weekType":"all"}]}`;
+
+// 条数对不上时的重扫提示词：告诉模型「应有几条 / 你给了几条」，并点出最容易漏的情形
+const PROMPT_FIX = (names, expect) => `这是一张大学课表截图，图上一共有 ${expect} 个彩色色块。
+
+上一遍只读出了 ${names.length} 条：
+${JSON.stringify(names)}
+
+数量对不上。请**从头重新扫描整张图**（不要沿用上面的答案，也不要只做增删），
+按「最上面那一行从上到下排、同一高度从左到右排」的顺序重新输出，必须正好 ${expect} 条。
+
+最容易漏掉的情形：同一门课（课名一样、颜色一样）在同一列里上下分成两块，那是两个块，必须各写一条。
+看不清文字的块也要写一条，name 填 "(未识别)"，不许跳过。
+
+字段格式同前：
+{"courses":[{"name":"课程名","dayChar":"三","loc":"地点","teacher":"","weekStart":1,"weekEnd":16,"weekType":"all"}]}
+
+只输出 JSON 对象，不要解释、不要代码块。`;
 
 const PROMPT_VERIFY = (courses, headerDates) => `还是同一张课表截图。
 
@@ -159,8 +178,24 @@ export async function onRequestPost({ request, env }) {
       return json({ error: '识别失败：模型未返回可解析的课程数据', detail: lastDetail }, 502);
     }
 
+    // raw 模式：像素已经数出准确条数，对不上就重扫一遍（同名同色的两块最容易漏）
+    let rescanned = false;
+    if (wantRaw && expect > 0 && first.length !== expect) {
+      try {
+        const p2 = await callModel(usedModel, key, PROMPT_FIX(first.map(c => c.name), expect), image);
+        const c2 = buildCourses(p2.items, [], { noMerge: true });
+        if (c2.length && Math.abs(c2.length - expect) < Math.abs(first.length - expect)) {
+          first = c2;
+          rescanned = true;
+        }
+      } catch { /* 重扫失败就用第一遍 */ }
+    }
+
     if (wantRaw) {
-      return json({ courses: first, model: usedModel, verified: false, changed: 0, raw: true });
+      return json({
+        courses: first, model: usedModel, verified: false, changed: 0, raw: true,
+        expect, rescanned,
+      });
     }
 
     // ===== 第 2 遍：核对星期与行数（失败则沿用第 1 遍）=====
