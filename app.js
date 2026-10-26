@@ -183,8 +183,8 @@ function normCourse(c) {
     const ns = parseNums(pick(c, ['period', '节次', '时间', 'time']));
     if (ns.length) { startV = ns[0]; endV = ns[ns.length - 1]; }
   }
-  let start = clampInt(parseNums(startV)[0], 1, 12, 1);
-  let end = clampInt(parseNums(endV).slice(-1)[0], 1, 12, start);
+  let start = clampInt(parseNums(startV)[0], 1, 16, 1);
+  let end = clampInt(parseNums(endV).slice(-1)[0], 1, 16, start);
   if (end < start) end = start;
 
   // 周次
@@ -251,7 +251,12 @@ function bindUpload() {
       const resp = await fetch('/api/recognize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: state.imageData, raw: true }),
+        body: JSON.stringify({
+          image: state.imageData,
+          raw: true,
+          // 像素已经数出色块数量，把它交给模型作为「应有条数」的硬约束
+          expect: state.grid && state.grid.ok ? state.grid.blocks.length : 0,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok || !data.courses) {
@@ -269,6 +274,10 @@ function bindUpload() {
         msg = '识别完成（像素定位不可用，星期节次为 AI 读数，请核对）';
       } else if (px.mode === 'mismatch') {
         msg = `识别完成，但像素检出 ${state.grid.blocks.length} 块 / 识别出 ${state.preview.length} 条，对不上，位置用 AI 读数，请核对`;
+      } else if (px.mode === 'partial') {
+        msg = `识别出 ${state.preview.length} 条 / 像素检出 ${state.grid.blocks.length} 块，只对齐了前 ${px.applied} 条，剩余请手动核正`;
+      } else if (px.mode === 'day') {
+        msg = `识别完成，${px.applied} 条按「星期」分档对齐到像素色块，节次以像素为准`;
       } else {
         msg = `识别完成，${px.applied} 条位置由像素精确定位`;
       }

@@ -63,6 +63,36 @@ const PROMPT_MAIN = `这是一张中国大学的周课表截图。请先抄表�
  "courses":[{"name":"大学物理实验","colDate":"28","dayChar":"三","rows":[5,6,7,8],"loc":"物理实验中心-201","teacher":"","weekStart":3,"weekEnd":8,"weekType":"all"},
             {"name":"大学英语","colDate":"30","dayChar":"五","rows":[1,2],"loc":"5教-302","teacher":"","weekStart":1,"weekEnd":16,"weekType":"all"}]}`;
 
+// raw 模式专用提示词：星期/节次前端已经用像素算出来了，这里只要"文字"
+// 故意不问 rows（节次）——那是模型最容易读错、也最没必要读的东西
+// expect：前端像素已经数出图上共有几个彩色色块，直接告诉模型，条数就几乎不会错
+const PROMPT_RAW = (expect) => `这是一张中国大学的周课表截图。请把每个彩色课块里的课程文字读出来，只输出 JSON。
+${expect > 0 ? `\n【数量】图上用像素扫描出**${expect} 个彩色色块**，所以 courses 数组必须有且只有 ${expect} 条。写完自己数一遍条数，不够就补，多了就删。\n` : ''}
+【顺序很重要】按色块"最上面那一行的位置"从上到下排；高度相同的，从左到右排（周一在左、周日在右）。
+这个顺序会被程序用来和图片上的色块一一对应，乱了整张表就会串位。
+
+【不需要做的事】
+- 不要数第几列、不要判断星期几（前端用像素自己算）。
+- 不要判断第几节、不要统计色块高度（前端用像素自己算）。
+- 不要因为"这看起来像同一门课"就合并两条。
+
+【每个色块一条，一条都不能省】
+即使两个色块课名一样、颜色一样，只要图上彼此分开（中间有空隙），就各写一条。
+看不清文字的块也要写一条，name 填 "(未识别)"，绝对不能跳过。
+
+【字段】
+- name: 课程名（色块第一行文字，别混入老师、地点）
+- dayChar: 该色块所在列顶部那个星期汉字，只写一个字（一/二/三/四/五/六/日）。只是照抄列头，别数第几列；看不清写 ""。
+- loc: 地点，「@(海甸)」后面那串教室名（"(海甸)"是校区）
+- teacher: 老师，没有就空字符串
+- weekStart/weekEnd/weekType: 「1-16周」→1,16,"all"；「3-8周」→3,8,"all"；含「单」→"odd"；含「双」→"even"；没写→1,16,"all"
+
+只输出 JSON 对象，不要解释、不要 markdown 代码块。
+
+格式：
+{"courses":[{"name":"大学物理实验","dayChar":"三","loc":"物理实验中心-201","teacher":"","weekStart":3,"weekEnd":8,"weekType":"all"},
+            {"name":"大学英语","dayChar":"五","loc":"5教-302","teacher":"","weekStart":1,"weekEnd":16,"weekType":"all"}]}`;
+
 const PROMPT_VERIFY = (courses, headerDates) => `还是同一张课表截图。
 
 表头日期（从左到右 7 列）：${JSON.stringify(headerDates && headerDates.length ? headerDates : '（请你自己重新抄一遍）')}
@@ -104,10 +134,14 @@ export async function onRequestPost({ request, env }) {
     const wantRaw = body.raw === true;
 
     // ===== 第 1 遍：抽取 =====
+    // raw 模式用简版提示词（只要文字），因为它不需要星期/节次，成功率高得多
+    // body.expect：前端像素已数出图上色块数量，直接告诉模型，条数基本不会错
+    const expect = Number(body.expect) | 0;
+    const prompt1 = wantRaw ? PROMPT_RAW(expect) : PROMPT_MAIN;
     let first = null, headerDates = [], usedModel = '', lastDetail = '';
     for (const model of MODELS) {
       try {
-        const payload = await callModel(model, key, PROMPT_MAIN, image);
+        const payload = await callModel(model, key, prompt1, image);
         const courses = buildCourses(payload.items, payload.headerDates, { noMerge: wantRaw });
         if (courses.length) {
           first = courses;
@@ -115,7 +149,8 @@ export async function onRequestPost({ request, env }) {
           usedModel = model;
           break;
         }
-        lastDetail = `${model} 有 JSON 但无有效课程`;
+        // 把模型的原始输出带一小段回去，便于定位是"字段名不对"还是"根本没读出来"
+        lastDetail = `${model} 有 JSON 但无有效课程（${payload.items.length} 条原始项）：${payload.raw.slice(0, 260)}`;
       } catch (e) {
         lastDetail = `${model} 异常: ${msgOf(e)}`;
       }
@@ -187,7 +222,9 @@ async function callModel(model, key, prompt, image) {
   }
   const data = await resp.json();
   const content = data?.choices?.[0]?.message?.content || '';
-  return extractPayload(content);
+  const out = extractPayload(content);
+  out.raw = String(content).replace(/\s+/g, ' ').slice(0, 300);
+  return out;
 }
 
 // ===== 解析模型输出：优先 {headerDates, courses} 对象，退化到纯数组 =====
@@ -249,21 +286,34 @@ function buildCourses(raw, headerDates, opts) {
   const noMerge = !!(opts && opts.noMerge);
   const hdr = (headerDates || []).map(normDateNum);
   const flat = [];
-  for (const item of raw) {
+  for (const item of raw || []) {
+    // 模型有时直接吐 ["高数","英语"] 这种纯字符串数组
+    if (typeof item === 'string') {
+      const n = str(item);
+      if (n) {
+        flat.push({ name: n, day: 0, dayHint: 0, dayConflict: false, dayChar: '', colDate: '',
+          min: 0, max: 0, loc: '', teacher: '', weekStart: 1, weekEnd: 16, weekType: 'all' });
+      }
+      continue;
+    }
     if (!item || typeof item !== 'object') continue;
     const name = str(pick(item, ['name', '课程', '课程名', 'course', 'courseName']));
+    if (!name) continue;
     const pos = resolveDay(item, hdr);
     const rows = toRows(item);
-    if (!name || !pos.day || !rows.length) continue;
+    // raw 模式：星期/节次由前端像素定位给出，模型只要读出课名就算有效
+    // （以前这里强制要求 day 和 rows，模型稍有偏差整张图就一条都留不下，直接 502）
+    if (!noMerge && (!pos.day || !rows.length)) continue;
     const wk = weekRange(item);
     flat.push({
       name,
       day: pos.day,
+      dayHint: pos.byChar || 0,
       dayConflict: pos.conflict,
       dayChar: charName(pos.byChar),
       colDate: str(pick(item, ['colDate', 'columnDate', 'date', '日期数字'])),
-      min: rows[0],
-      max: rows[rows.length - 1],
+      min: rows.length ? rows[0] : 0,
+      max: rows.length ? rows[rows.length - 1] : 0,
       loc: str(pick(item, ['loc', 'location', '地点', '教室', 'room'])),
       teacher: str(pick(item, ['teacher', '教师', '老师'])),
       weekStart: wk.start,
@@ -278,6 +328,7 @@ function buildCourses(raw, headerDates, opts) {
     return {
       name: c.name,
       day: c.day,
+      dayHint: c.dayHint,
       dayChar: c.dayChar,
       colDate: c.colDate,
       dayConflict: c.dayConflict,

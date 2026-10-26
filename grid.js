@@ -355,10 +355,12 @@
   }
 
   // ===== 把模型读到的文字按顺序贴到像素色块上 =====
-  // 位置全部以像素为准。三级兜底，任何一级对不上都不会比"纯 AI 读数"更差：
+  // 位置全部以像素为准。多级兜底，任何一级对不上都不会比"纯 AI 读数"更差：
   //   1) 按「起始节」分档（模型判起始节最稳）
   //   2) 按「起止节」分档
-  //   3) 条数相同时按输出顺序一一对应（模型可能把节次读错，但先后顺序通常是对的）
+  //   3) 条数相同时按输出顺序一一对应（模型可能把位置读错，但先后顺序通常是对的）
+  //   4) 条数不同时，先试「按星期汉字分档」（每档内保序）—— 照抄列头比数格子可靠
+  //   5) 还是不行就按顺序近似对齐前 min(n,m) 条，并告诉前端"这只是近似"
   function applyToCourses(courses, grid) {
     if (!grid || !grid.ok || !grid.blocks.length || !courses || !courses.length) {
       return { applied: 0, mode: 'none' };
@@ -393,6 +395,12 @@
       }
       return n;
     };
+    const put = (c, b) => {
+      c.day = b.day;
+      c.start = b.start;
+      c.end = b.end;
+      c.fromPixel = true;
+    };
 
     let n = tryAssign(c => String(c.start));
     if (n !== null) return { applied: n, mode: 'start' };
@@ -400,14 +408,21 @@
     if (n !== null) return { applied: n, mode: 'range' };
 
     if (grid.blocks.length === courses.length) {
-      for (let i = 0; i < courses.length; i++) {
-        const b = grid.blocks[i];
-        courses[i].day = b.day;
-        courses[i].start = b.start;
-        courses[i].end = b.end;
-        courses[i].fromPixel = true;
-      }
+      for (let i = 0; i < courses.length; i++) put(courses[i], grid.blocks[i]);
       return { applied: courses.length, mode: 'order' };
+    }
+
+    // 条数不一致：模型给了星期汉字的话，按星期分档、各档内保序 —— 比整体平移稳
+    if (courses.every(c => c.dayHint >= 1 && c.dayHint <= 7)) {
+      n = tryAssign(c => String(c.dayHint));
+      if (n !== null) return { applied: n, mode: 'day' };
+    }
+
+    // 最后按顺序近似对齐重叠部分，剩下的留给用户改
+    const k = Math.min(grid.blocks.length, courses.length);
+    if (k >= 2) {
+      for (let i = 0; i < k; i++) put(courses[i], grid.blocks[i]);
+      return { applied: k, mode: 'partial' };
     }
     return { applied: 0, mode: 'mismatch' };
   }
