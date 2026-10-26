@@ -429,6 +429,9 @@
     }
 
     if (grid.blocks.length === courses.length) {
+      // 模型偶尔把相邻两块写反（多见于同一天里上下两块同名同色的课）。
+      // 用模型自报的星期汉字做一次相邻交换的局部修正，只有"更吻合"才交换。
+      improveByDayHint(courses, grid.blocks);
       for (let i = 0; i < courses.length; i++) put(courses[i], grid.blocks[i]);
       return { applied: courses.length, mode: 'order' };
     }
@@ -446,6 +449,32 @@
       return { applied: k, mode: 'partial' };
     }
     return { applied: 0, mode: 'mismatch' };
+  }
+
+  // 相邻交换的爬山：以「课程自报的星期汉字」和「对应色块所在列」的吻合条数为目标，
+  // 只有严格变好才交换，所以原本对的情况不会被弄乱。
+  function improveByDayHint(courses, blocks) {
+    const score = () => {
+      let s = 0;
+      for (let i = 0; i < courses.length; i++) {
+        const d = courses[i].dayHint;
+        if (d >= 1 && d <= 7 && blocks[i] && blocks[i].day === d) s++;
+      }
+      return s;
+    };
+    let cur = score();
+    for (let pass = 0; pass < 2; pass++) {
+      let moved = false;
+      for (let i = 0; i + 1 < courses.length; i++) {
+        const a = courses[i], b = courses[i + 1];
+        courses[i] = b; courses[i + 1] = a;
+        const s = score();
+        if (s > cur) { cur = s; moved = true; }
+        else { courses[i] = a; courses[i + 1] = b; }
+      }
+      if (!moved) break;
+    }
+    return cur;
   }
 
   const api = { detect, applyToCourses, median, cvg };
