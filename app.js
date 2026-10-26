@@ -189,7 +189,11 @@ function normCourse(c) {
   }
   if (we < ws) we = ws;
 
-  return { name, day, start, end, loc, teacher, weekStart: ws, weekEnd: we, weekType };
+  return {
+    name, day, start, end, loc, teacher, weekStart: ws, weekEnd: we, weekType,
+    dayConflict: !!c.dayConflict,   // 三路读数不一致，前端标 ⚠ 提醒核对
+    colDate: c.colDate || '',
+  };
 }
 function normalizeSide(v) {
   if (Array.isArray(v)) return { startDate: null, courses: v.map(normCourse) };
@@ -237,8 +241,9 @@ function bindUpload() {
       state.preview = data.courses.map(normCourse);
       state.editingExisting = false; // 新识别的结果，不属于「已保存课表」
       renderPreview();
-      const fixed = data.verified ? (data.changed > 0 ? `，已自动校正 ${data.changed} 处星期/节次` : '，星期已复核') : '';
-      toast('识别完成' + fixed + '，请核对后保存');
+      const fixed = data.verified ? (data.changed > 0 ? `，已自动校正 ${data.changed} 处` : '，已复核') : '';
+      const conf = data.conflicts > 0 ? `；${data.conflicts} 行星期读数不一致已标 ⚠，请重点核对` : '';
+      toast('识别完成' + fixed + conf + '，确认后保存');
     } catch (e) {
       toast('识别失败：' + e.message + '（可手动添加）');
       if (!state.preview.length) { state.preview = [emptyCourse()]; renderPreview(); }
@@ -258,10 +263,11 @@ function renderPreview() {
   body.innerHTML = '';
   state.preview.forEach((c, i) => {
     const tr = document.createElement('tr');
+    if (c.dayConflict) tr.className = 'conflict-row';
     tr.innerHTML = `
       <td class="td-del"><button class="row-del" data-del="${i}" title="删除这一行">✕</button></td>
       <td><input data-i="${i}" data-k="name" value="${esc(c.name)}" placeholder="课程名"/></td>
-      <td><select data-i="${i}" data-k="day">${DAYS.map((d, di) => `<option value="${di + 1}" ${c.day === di + 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></td>
+      <td class="day-cell">${c.dayConflict ? '<span class="warn" title="星期读数不一致，请核对这一行">⚠</span>' : ''}<select data-i="${i}" data-k="day">${DAYS.map((d, di) => `<option value="${di + 1}" ${c.day === di + 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></td>
       <td><input data-i="${i}" data-k="start" type="number" min="1" max="12" value="${c.start}"/></td>
       <td><input data-i="${i}" data-k="end" type="number" min="1" max="12" value="${c.end}"/></td>
       <td><input data-i="${i}" data-k="loc" value="${esc(c.loc)}" placeholder="地点"/></td>
@@ -275,6 +281,16 @@ function renderPreview() {
     el.addEventListener('change', () => {
       const i = +el.dataset.i, k = el.dataset.k;
       state.preview[i][k] = intKeys.includes(k) ? parseInt(el.value, 10) : el.value;
+      // 用户手动改过星期就不再算「读数冲突」
+      if (k === 'day') {
+        state.preview[i].dayConflict = false;
+        const tr = el.closest('tr');
+        if (tr) {
+          tr.classList.remove('conflict-row');
+          const w = tr.querySelector('.warn');
+          if (w) w.remove();
+        }
+      }
     });
   });
   body.querySelectorAll('.row-del').forEach(b => {
@@ -322,16 +338,23 @@ function bindPreviewActions() {
   // 编辑已保存的课表（识别的课存错了也能在这里删掉）
   $('editSavedBtn').addEventListener('click', openSavedEditor);
 
-  // 整表星期错位时一键平移（比如整体被读到了后一天）
-  document.querySelectorAll('.shift-btn[data-shift]').forEach(b => {
-    b.addEventListener('click', () => {
-      if (!state.preview.length) { toast('还没有课程'); return; }
-      const d = parseInt(b.dataset.shift, 10) || 0;
-      state.preview.forEach(c => { c.day = ((c.day - 1 + d + 7) % 7) + 1; });
-      renderPreview();
-      toast(d > 0 ? '全部课程已推后一天' : '全部课程已提前一天');
+  // 星期错位一键平移：可只动某一天，也可整表动
+  const shiftBy = (delta) => {
+    if (!state.preview.length) { toast('还没有课程'); return; }
+    const scope = $('shiftScope').value;
+    const only = scope === 'all' ? 0 : parseInt(scope, 10);
+    let n = 0;
+    state.preview.forEach(c => {
+      if (only && c.day !== only) return;
+      c.day = ((c.day - 1 + delta + 7) % 7) + 1;
+      n++;
     });
-  });
+    if (!n) { toast(DAYS[only - 1] + '没有课，没动'); return; }
+    renderPreview();
+    toast((only ? DAYS[only - 1] : '全部') + '的 ' + n + ' 门课已' + (delta > 0 ? '推后' : '提前') + '一天');
+  };
+  $('shiftBack').addEventListener('click', () => shiftBy(-1));
+  $('shiftFwd').addEventListener('click', () => shiftBy(1));
 
   $('cancelBtn').addEventListener('click', () => {
     $('previewCard').hidden = true;
@@ -355,7 +378,13 @@ function bindPreviewActions() {
   });
 
   $('confirmBtn').addEventListener('click', async () => {
-    const courses = state.preview.filter(c => c.name);
+    // 只保留课表需要的字段，别把识别过程中的临时标记（dayConflict/colDate）存进云端
+    const courses = state.preview
+      .filter(c => c.name)
+      .map(c => ({
+        name: c.name, day: c.day, start: c.start, end: c.end, loc: c.loc, teacher: c.teacher,
+        weekStart: c.weekStart, weekEnd: c.weekEnd, weekType: c.weekType,
+      }));
     if (!courses.length) {
       if (!state.editingExisting) { toast('没有可保存的课程'); return; }
       // 编辑已保存课表时允许存成空 → 等于把这一侧清空

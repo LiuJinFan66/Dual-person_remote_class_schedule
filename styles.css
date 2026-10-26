@@ -114,6 +114,13 @@ button { font-family: inherit; cursor: pointer; border: none; }
 .edit-table .empty-row { color: var(--muted); font-size: 12px; padding: 14px 6px; }
 .shift-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .shift-btn { background: #f1f5f9; color: var(--ink); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.shift-select { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-size: 12px; font-family: inherit; background: #fff; color: var(--ink); }
+/* 三路读数不一致的行：淡橙色底 + ⚠，提示重点核对 */
+.conflict-row td { background: #fffaf0; }
+.conflict-row td.td-del { background: #fffaf0; }
+.day-cell { position: relative; }
+.day-cell .warn { color: #f59e0b; font-size: 11px; font-weight: 700; }
+.warn-inline { color: #f59e0b; font-weight: 700; }
 .preview-actions { display: flex; gap: 10px; margin-top: 12px; }
 
 /* 合并课表 */
@@ -169,4 +176,5 @@ button { font-family: inherit; cursor: pointer; border: none; }
   position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);
   background: rgba(31,41,55,.92); color: #fff; padding: 10px 18px; border-radius: 20px;
   font-size: 13px; z-index: 50; max-width: 80%;
+  line-height: 1.5; text-align: center; border-radius: 14px;
 }

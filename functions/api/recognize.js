@@ -1,61 +1,72 @@
 // Cloudflare Pages Function: /api/recognize
 // 接收 base64 图片，调用智谱视觉模型识别课表，返回结构化课程数组
 //
-// 两遍识别（解决「有课被识别到后一天」）：
-//   第 1 遍：抽取课程。星期不让模型写数字，而是让它【照抄该列顶部印着的汉字】（一/二/三…）。
-//            照抄是转录任务，「三→3」是转换任务，后者容易错位；服务端再做汉字→数字。
-//   第 2 遍：把第 1 遍结果连同原图再发一次，只核对「星期列」和「节次行数」，
-//            这是链式校验：手里已有答案再做局部核对，比一次成型准确得多。
-//   第 2 遍失败或结构不一致就丢弃，用第 1 遍结果，保证不倒退。
+// 三路定位 + 双遍核对（针对「整列被识别到后一天」）：
+//   让模型对每一门课给出三个彼此独立的坐标读数，服务端再投票：
+//     ① colDate —— 该列顶部印的日期数字（如 "28"），与表头日期序列做字符串匹配得到列号
+//     ② dayChar —— 该列顶部印的星期汉字（如 "三"），直接查表得到列号
+//     ③ day     —— 模型自己数出来的列号（不主动要求，模型自愿给才用）
+//   这三者中任意一个出错的方式不同（数格子 / 转数字 / 对齐表头），投票能纠正个别偏差；
+//   三者不一致时给 dayConflict=true，前端把该行标黄，让用户只复核这些行。
+//
+//   第 2 遍：把原图和第一遍结果一起再问一次，只核对星期列与 rows 行数，条数不符则丢弃。
 
 const MODELS = ['glm-4.1v-thinking-flash', 'glm-4v-flash'];
 const API = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
 
-const PROMPT_MAIN = `这是一张中国大学的周课表截图。请把表格里每一个「彩色课块」逐个找出来，输出 JSON 数组。
+const PROMPT_MAIN = `这是一张中国大学的周课表截图。请先抄表头，再逐个找彩色课块。只输出一个 JSON 对象。
 
-【表格结构】
-- 表头一行是 7 列，每列顶部印着一个汉字：一 二 三 四 五 六 日（星期一到星期日）。
-- 这 7 个汉字上方还有 26、27、28 这类日期数字。日期和星期没有固定关系，绝不要用日期去推算星期，只认列顶部的汉字。
-- 最左边一列是节次列，写着 1、2、3 …… 一直到最后一节，还夹着 07:40-08:25 这样的时间。这一列是节次，不是星期一。请以截图里实际显示的最大行号为准，不要预设只有 11 行。
-- 顶部「第X周」是当前查看第几周，不是课程的周次。
+【第一步：抄表头】
+- 表头最上面一行是 7 个日期数字，从左到右，例如 26、27、28、29、30、31、1（有的会写成 10/26 这种）。
+  请把这一行的 7 个数字原样照抄成字符串数组 headerDates，例如 ["26","27","28","29","30","31","1"]。
+  某个列没有写日期就写 ""。必须凑齐 7 项，顺序不能乱，也不要漏掉最后一列。
+- 日期下面一行是 7 个星期汉字：一 二 三 四 五 六 日。日期和星期的对应关系就是列的对应关系。
 
-【最容易错的地方：星期列】
-- 每一门课都必须从它所在块的【正中间垂直往上】看，看到表头那一列顶部的汉字，然后把这个汉字照抄到 dayChar 里。
-- 最左边那一列（写 1、2、3 和时间的）是节次列，它头顶上没有星期汉字。绝不许把节次列算作第一列，也绝不许因为"块挨着节次列就往右挪一天"。
-- 如果星期块左边紧挨着的就是节次列，那它就在【第一列，周一】。
-- 如果截图最左边有被裁掉一半的列，不要把它当成独立的一天。
-- 允许 dayChar 和 day 同时输出，但 dayChar 必须是你照抄的汉字，不许凭数字推。
+【第二步：逐个彩色课块】
+每一门课都要填两个坐标读数，都要"照抄"，不许自己推算：
+- colDate: 这门课所在列的顶部那个日期数字，照抄（如 "28"）。看不清就写 ""，绝对不要猜。
+- dayChar: 这门课所在列顶部的星期汉字，只写一个字（一/二/三/四/五/六/日）。
+
+定位方法：从色块的正中间垂直往上，一直看到表头，读出那一列顶上的日期和汉字。
+两个坑必须避开：
+- 最左边那一列写着 1、2、3 和 07:40 这类时间，那是节次列，头顶没有日期也没有星期汉字，绝不算作一列。
+- 色块左边紧挨节次列的，就是第一列（周一），不要往右挪一天。
+- 如果截图最左边有被裁掉一半的列，不要当成独立的一天。
 
 【连堂色块要覆盖全部行】
-一门连着上几节的课是一个纵向很高的色块，可能占 2 行、3 行、4 行。
-请贴着色块的上边缘和下边缘，数清它压住了哪几行，把每一个行号都写进 rows：
-- 顶在「5」行、底在「8」行 → rows = [5,6,7,8]，四个数字都要写。
-- 晚上占 9、10、11 → [9,10,11]；只占 9、10 → [9,10]；只占一行 → [5]。
-- 判断方法：色块高度大约是单行高度的几倍，rows 就该有几个数字。
+一门连着上几节的课是纵向很高的色块，可能占 2、3、4 行。请贴着色块上下边缘数清它压住的行，全部写进 rows：
+- 顶在 5 行、底在 8 行 → rows = [5,6,7,8]
+- 晚上占 9、10、11 → [9,10,11]；只占 9、10 → [9,10]；单行 → [5]
+- 色块高度是单行的几倍，rows 就该有几个数字。
 
-【字段】
+【每门课的字段】
 - name: 课程名（色块第一行文字，别混入老师、地点）
-- dayChar: 该块所在列顶部的汉字，只写一个字：一/二/三/四/五/六/日
+- colDate / dayChar: 见上
 - rows: 该块纵向覆盖的全部行号，升序数组
 - loc: 地点，「@(海甸)」后面那串教室名（"(海甸)"是校区）
 - teacher: 老师，没有就空字符串
 - weekStart/weekEnd/weekType: 「1-16周」→1,16,"all"；「3-8周」→3,8,"all"；含「单」→"odd"；含「双」→"even"；没写→1,16,"all"
 
 【硬性要求】
-1. 星期只认列顶部的汉字，并且是照抄，不是推算。
+1. 星期只靠 colDate 和 dayChar 照抄，绝不用日期去推算星期，也绝不靠数第几列。
 2. 节次只认左侧行号，绝不把上课时间当节次。
 3. rows 必须完整覆盖色块高度。
 4. 每个有课的块都要一条；同课名在不同星期或不同节次，分别输出。
-5. 只输出 JSON 数组，不要解释、不要 markdown 代码块。
+5. 只输出 JSON 对象，不要解释、不要 markdown 代码块。
 
-示例：
-[{"name":"大学物理实验","dayChar":"三","rows":[5,6,7,8],"loc":"物理实验中心-201","teacher":"","weekStart":3,"weekEnd":8,"weekType":"all"},
- {"name":"大学英语","dayChar":"五","rows":[1,2],"loc":"5教-302","teacher":"","weekStart":1,"weekEnd":16,"weekType":"all"}]`;
+格式：
+{"headerDates":["26","27","28","29","30","31","1"],
+ "courses":[{"name":"大学物理实验","colDate":"28","dayChar":"三","rows":[5,6,7,8],"loc":"物理实验中心-201","teacher":"","weekStart":3,"weekEnd":8,"weekType":"all"},
+            {"name":"大学英语","colDate":"30","dayChar":"五","rows":[1,2],"loc":"5教-302","teacher":"","weekStart":1,"weekEnd":16,"weekType":"all"}]}`;
 
-const PROMPT_VERIFY = (courses) => `还是同一张课表截图。下面是第一遍识别的结果：
+const PROMPT_VERIFY = (courses, headerDates) => `还是同一张课表截图。
 
+表头日期（从左到右 7 列）：${JSON.stringify(headerDates && headerDates.length ? headerDates : '（请你自己重新抄一遍）')}
+
+第一遍的识别结果：
 ${JSON.stringify(courses.map(c => ({
   name: c.name,
+  colDate: c.colDate,
   dayChar: c.dayChar,
   rows: c.rows,
   loc: c.loc,
@@ -64,16 +75,15 @@ ${JSON.stringify(courses.map(c => ({
   weekType: c.weekType,
 })))}
 
-请只核对两件事，逐条检查每一门课：
-（1）星期列有没有错位。方法是：从这门课的色块正中间垂直往上，看表头那一列顶部印的汉字，和你记的 dayChar 是否一致。
-      特别注意两个坑：① 最左边写 1、2、3 和时间的列是节次列，不是星期一，不能算进星期列；
-      ② 色块左边紧挨节次列的，就是第一列「一」（周一），不要往右挪一天。
-（2）rows 的行数是否等于色块高度。色块跨 4 行就必须有 4 个行号。
+请逐条核对两件事：
+（1）星期列是否错位。方法：从这门课的色块正中间垂直往上，看它所在列顶部的日期数字和星期汉字，与 colDate、dayChar 是否一致。
+      注意：最左边写 1、2、3 和时间的列是节次列，不是星期一，不能算进星期列；色块紧挨节次列的就是第一列（周一）。
+（2）rows 的行数是否等于色块高度。
 
 规则：
-- 没有错的条目原样保留，课程名、地点、周次一个字都不许改。
-- 只修明确错位的 dayChar 和 rows。
-- 输出完整的 JSON 数组，字段与输入完全一致，不要解释、不要代码块。`;
+- 没错的条目原样保留，课程名、地点、周次一个字都不许改。
+- 只修明确错位的 colDate、dayChar 和 rows。
+- 输出 {"headerDates":[...7项...],"courses":[...]} 完整对象，不要解释、不要代码块。`;
 
 export async function onRequestPost({ request, env }) {
   try {
@@ -88,17 +98,18 @@ export async function onRequestPost({ request, env }) {
     }
 
     // ===== 第 1 遍：抽取 =====
-    let first = null, usedModel = '', lastDetail = '';
+    let first = null, headerDates = [], usedModel = '', lastDetail = '';
     for (const model of MODELS) {
       try {
-        const arr = await callModel(model, key, PROMPT_MAIN, image);
-        if (arr && arr.length) {
-          const courses = buildCourses(arr);
-          if (courses.length) { first = courses; usedModel = model; break; }
-          lastDetail = `${model} 有 JSON 但无有效课程`;
-        } else {
-          lastDetail = `${model} 无有效 JSON`;
+        const payload = await callModel(model, key, PROMPT_MAIN, image);
+        const courses = buildCourses(payload.items, payload.headerDates);
+        if (courses.length) {
+          first = courses;
+          headerDates = payload.headerDates;
+          usedModel = model;
+          break;
         }
+        lastDetail = `${model} 有 JSON 但无有效课程`;
       } catch (e) {
         lastDetail = `${model} 异常: ${msgOf(e)}`;
       }
@@ -112,9 +123,10 @@ export async function onRequestPost({ request, env }) {
     const order = [usedModel, ...MODELS.filter(m => m !== usedModel)];
     for (const model of order) {
       try {
-        const arr = await callModel(model, key, PROMPT_VERIFY(first), image);
-        if (!arr || !arr.length) continue;
-        const second = buildCourses(arr);
+        const payload = await callModel(model, key, PROMPT_VERIFY(first, headerDates), image);
+        if (!payload.items.length) continue;
+        const hdr = payload.headerDates.length >= 5 ? payload.headerDates : headerDates;
+        const second = buildCourses(payload.items, hdr);
         if (second.length !== first.length) continue; // 条数对不上说明这遍跑偏了，不采用
         changed = countDiff(first, second);
         final = second;
@@ -123,7 +135,9 @@ export async function onRequestPost({ request, env }) {
       } catch { /* 核对失败不影响主流程 */ }
     }
 
-    return json({ courses: final, model: usedModel, verified, changed });
+    // 仍有三路读数不一致的行 → 把候选值一起返回，前端标黄让用户只复核这些
+    const conflicts = final.filter(c => c.dayConflict).length;
+    return json({ courses: final, model: usedModel, verified, changed, headerDates, conflicts });
   } catch (e) {
     return json({ error: msgOf(e) }, 500);
   }
@@ -140,7 +154,7 @@ export async function onRequestOptions() {
   });
 }
 
-// 调一次模型，返回解析出的 JSON 数组
+// 调一次模型，返回 { headerDates, items }
 async function callModel(model, key, prompt, image) {
   const resp = await fetch(API, {
     method: 'POST',
@@ -163,23 +177,80 @@ async function callModel(model, key, prompt, image) {
   }
   const data = await resp.json();
   const content = data?.choices?.[0]?.message?.content || '';
-  return extractJsonArray(content);
+  return extractPayload(content);
+}
+
+// ===== 解析模型输出：优先 {headerDates, courses} 对象，退化到纯数组 =====
+
+function extractPayload(text) {
+  const s = String(text);
+  const obj = extractJsonObject(s);
+  if (obj) {
+    const items = firstArray(
+      obj.courses || obj.blocks || obj.list || obj.data || obj['课程'] || obj['课表']
+    );
+    if (items && items.length) {
+      return { items, headerDates: toStringArray(obj.headerDates || obj.dates || obj.header) };
+    }
+  }
+  return { items: extractJsonArray(s) || [], headerDates: [] };
+}
+
+function firstArray(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    for (const k of Object.keys(v)) if (Array.isArray(v[k]) && v[k].length) return v[k];
+  }
+  return null;
+}
+
+function toStringArray(v) {
+  if (!Array.isArray(v)) return [];
+  return v.map(x => (x && typeof x === 'object' ? String(pick(x, ['date', 'day', 'd', 'text']) || '') : str(x)));
+}
+
+// 找出文本里第一个「含有数组字段」的 JSON 对象
+function extractJsonObject(text) {
+  for (let i = text.indexOf('{'); i !== -1; i = text.indexOf('{', i + 1)) {
+    let depth = 0;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          try {
+            const obj = JSON.parse(text.slice(i, j + 1));
+            if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+              if (firstArray(obj)) return obj;
+            }
+          } catch { /* 换下一个起点 */ }
+          break;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 // ===== 把模型的原始输出整理成课程 =====
 
-function buildCourses(raw) {
+function buildCourses(raw, headerDates) {
+  const hdr = (headerDates || []).map(normDateNum);
   const flat = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const name = str(pick(item, ['name', '课程', '课程名', 'course', 'courseName']));
-    const day = resolveDay(item);
+    const pos = resolveDay(item, hdr);
     const rows = toRows(item);
-    if (!name || !day || !rows.length) continue;
+    if (!name || !pos.day || !rows.length) continue;
     const wk = weekRange(item);
     flat.push({
-      name, day,
-      dayChar: charDay(pick(item, ['dayChar', 'dayLabel', 'weekdayChar', '星期字'])) || '',
+      name,
+      day: pos.day,
+      dayConflict: pos.conflict,
+      dayChar: charName(pos.byChar),
+      colDate: str(pick(item, ['colDate', 'columnDate', 'date', '日期数字'])),
       min: rows[0],
       max: rows[rows.length - 1],
       loc: str(pick(item, ['loc', 'location', '地点', '教室', 'room'])),
@@ -190,7 +261,7 @@ function buildCourses(raw) {
     });
   }
 
-  // 同一门课在同一天可能被拆成相邻两个块（[5,6] + [7,8]），合并回 5-8
+  // 同一门课在同一天可能被拆成相邻两块（[5,6] + [7,8]），合并回 5-8
   const buckets = new Map();
   for (const c of flat) {
     const k = c.day + '|' + c.name;
@@ -227,6 +298,8 @@ function buildCourses(raw) {
       name: c.name,
       day: c.day,
       dayChar: c.dayChar,
+      colDate: c.colDate,
+      dayConflict: c.dayConflict,
       rows,
       start: c.min,
       end: c.max,
@@ -239,12 +312,46 @@ function buildCourses(raw) {
   });
 }
 
-// 星期：优先用模型照抄的汉字，其次才是数字
-function resolveDay(c) {
+// 三路读数投票：colDate→列号、dayChar→列号、day 数字
+function resolveDay(c, hdr) {
+  const colDate = normDateNum(pick(c, ['colDate', 'columnDate', 'date', '日期数字']));
   const byChar = charDay(pick(c, ['dayChar', 'dayLabel', 'weekdayChar', '星期字']));
   const byNum = toDayNum(pick(c, ['day', '星期', '周几', '星期几', 'weekday']));
-  if (byChar && byNum && byChar !== byNum) return byChar; // 汉字来自列头，可信度更高
-  return byChar || byNum || 0;
+
+  let byDate = 0;
+  if (colDate && hdr.length >= 5) {
+    const idx = hdr.findIndex(x => x !== null && x === colDate);
+    if (idx >= 0 && idx < 7) byDate = idx + 1;
+  }
+
+  const votes = [byDate, byChar, byNum].filter(v => v >= 1 && v <= 7);
+  if (!votes.length) return { day: 0, conflict: false, byChar: 0 };
+
+  const tally = new Map();
+  for (const v of votes) tally.set(v, (tally.get(v) || 0) + 1);
+  let best = 0, bestCount = 0;
+  for (const [v, n] of tally) if (n > bestCount) { best = v; bestCount = n; }
+
+  const conflict = votes.length > 1 && new Set(votes).size > 1;
+  // 票数打平（比如只有两路且不一致）时，优先信日期匹配，其次汉字
+  if (conflict && tally.get(best) === 1) {
+    best = byDate || byChar || byNum;
+  }
+  return { day: best, conflict, byChar };
+}
+
+// 日期串 → 日号（"10/26"→26, "26日"→26, "26"→26）
+function normDateNum(v) {
+  const s = str(v);
+  if (!s) return null;
+  const nums = s.match(/\d+/g);
+  if (!nums || !nums.length) return null;
+  const last = Number(nums[nums.length - 1]);
+  return Number.isFinite(last) ? last : null;
+}
+
+function charName(n) {
+  return ['', '一', '二', '三', '四', '五', '六', '日'][n] || '';
 }
 
 // 汉字/英文 → 1..7
@@ -269,9 +376,7 @@ function toDayNum(v) {
     if (x === 0 || x === 7) return 7;
     if (x >= 1 && x <= 6) return x;
   }
-  const byChar = charDay(s);
-  if (byChar) return byChar;
-  return 0;
+  return charDay(s);
 }
 
 function toRows(c) {
@@ -323,7 +428,7 @@ function clampWeek(n) {
   return Math.min(30, Math.max(1, Math.round(n)));
 }
 
-// 统计两遍结果里星期/行数不一致的条数，用于给用户反馈「自动修正了几处」
+// 统计两遍结果里星期/行数不一致的条数
 function countDiff(a, b) {
   let n = 0;
   for (let i = 0; i < a.length; i++) {
@@ -360,7 +465,7 @@ function msgOf(e) {
   return String(e && e.message ? e.message : e);
 }
 
-// 从模型输出文本里稳健地提取第一个能解析的 JSON 数组（可夹杂思考文字）
+// 从文本里提取第一个能解析的 JSON 数组
 function extractJsonArray(text) {
   const s = String(text);
   for (let i = s.indexOf('['); i !== -1; i = s.indexOf('[', i + 1)) {
@@ -371,11 +476,10 @@ function extractJsonArray(text) {
       else if (ch === ']') {
         depth--;
         if (depth === 0) {
-          const sub = s.slice(i, j + 1);
           try {
-            const arr = JSON.parse(sub);
+            const arr = JSON.parse(s.slice(i, j + 1));
             if (Array.isArray(arr) && arr.length) return arr;
-          } catch { /* 尝试下一个起点 */ }
+          } catch { /* 换下一个起点 */ }
           break;
         }
       }

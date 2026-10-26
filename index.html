@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#6d28d9" />
   <title>我们的课表 · 蓝粉双色</title>
-  <link rel="stylesheet" href="./styles.css?v=5" />
+  <link rel="stylesheet" href="./styles.css?v=6" />
 </head>
 <body>
   <header class="topbar">
@@ -65,11 +65,21 @@
         <tbody id="previewBody"></tbody>
       </table>
     </div>
-    <p class="hint">左侧红色 ✕ 可直接删掉识别错的课；改完点下面「保存并合并」。</p>
+    <p class="hint">左侧红色 ✕ 可删掉识别错的课；带 <span class="warn-inline">⚠</span> 的行是三路读数不一致、建议核对。改完点下面「保存并合并」。</p>
     <div class="shift-row">
-      <span>整表星期都错位了？</span>
-      <button class="shift-btn" data-shift="-1">← 全部提前一天</button>
-      <button class="shift-btn" data-shift="1">全部推后一天 →</button>
+      <span>星期错位？</span>
+      <select id="shiftScope" class="shift-select">
+        <option value="all">整张表</option>
+        <option value="1">只有周一</option>
+        <option value="2">只有周二</option>
+        <option value="3">只有周三</option>
+        <option value="4">只有周四</option>
+        <option value="5">只有周五</option>
+        <option value="6">只有周六</option>
+        <option value="7">只有周日</option>
+      </select>
+      <button class="shift-btn" id="shiftBack">← 提前一天</button>
+      <button class="shift-btn" id="shiftFwd">推后一天 →</button>
     </div>
     <div class="preview-actions">
       <button id="confirmBtn" class="btn-primary">保存并合并</button>
@@ -109,11 +119,11 @@
       <span class="dot both"></span>都上课
       <span class="dot free"></span>都空闲
     </p>
-    <p class="version">v5 · 星期双遍核对 + 整表平移</p>
+    <p class="version">v6 · 表头日期锚点 + 三路投票</p>
   </section>
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./app.js?v=5"></script>
+  <script src="./app.js?v=6"></script>
 </body>
 </html>
