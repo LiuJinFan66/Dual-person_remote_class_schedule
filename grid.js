@@ -401,11 +401,32 @@
       c.end = b.end;
       c.fromPixel = true;
     };
+    // 按节次配对只用来"认领"哪个色块是哪门课，位置仍然取色块的。
+    // 但如果模型把节次读错成另一套数字，这套配对可能整体错位 —— 用星期汉字投一次票把住关。
+    const dayAgreeOk = () => {
+      let tot = 0, ok = 0;
+      for (const c of courses) {
+        if (!(c.dayHint >= 1 && c.dayHint <= 7)) continue;
+        tot++;
+        if (c.day === c.dayHint) ok++;
+      }
+      return tot === 0 || ok / tot >= 0.5;
+    };
+    const hasRows = () => courses.every(c => c.start >= 1 && c.end >= c.start);
+    const undo = () => courses.forEach(c => {
+      if (c.fromPixel) { c.day = 0; c.start = 0; c.end = 0; delete c.fromPixel; }
+    });
+    let n = null;
 
-    let n = tryAssign(c => String(c.start));
-    if (n !== null) return { applied: n, mode: 'start' };
-    n = tryAssign(c => c.start + '-' + c.end);
-    if (n !== null) return { applied: n, mode: 'range' };
+    if (hasRows()) {
+      n = tryAssign(c => String(c.start));
+      if (n !== null && dayAgreeOk()) return { applied: n, mode: 'start' };
+      undo();
+
+      n = tryAssign(c => c.start + '-' + c.end);
+      if (n !== null && dayAgreeOk()) return { applied: n, mode: 'range' };
+      undo();
+    }
 
     if (grid.blocks.length === courses.length) {
       for (let i = 0; i < courses.length; i++) put(courses[i], grid.blocks[i]);
