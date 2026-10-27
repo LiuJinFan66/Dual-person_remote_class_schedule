@@ -114,6 +114,31 @@ ${JSON.stringify(names)}
 
 只输出 JSON 对象，不要解释、不要代码块。`;
 
+// 最可靠的一版提示词：前端已经把每个色块标了序号，模型只做「按编号抄课名」
+// 顺序、条数、星期、节次全部由像素决定，模型一个都不需要判断
+const PROMPT_SLOTS = (n) => `这是一张中国大学的周课表截图。图上有 ${n} 个彩色色块，每个色块旁边都印了一个**红底白字的序号**（1 到 ${n}）。
+
+请**按序号**逐个把色块里的课程信息读出来。只输出 JSON。
+
+【要点】
+- 序号已经替你数好了：不需要数第几列、不需要判断星期几、不需要判断第几节 —— 这些都由程序另外算。
+- 1 到 ${n} 每个序号都要有一条，**一条都不能漏**；看不清文字的块，name 写 "(未识别)"，也不要跳过。
+- 序号有的印在色块**正上方**（当色块上面那格是空的），有的压在该色块**右上角**；都是指它下面/所在的那个色块。
+- 一门课纵向连着占好几节时是一个长色块，只有一条记录，不要按节数拆成多条。
+
+【字段】
+- no: 图上的序号，数字（1..${n}）
+- name: 课程名（色块第一行的文字，别混入老师、地点）
+- loc: 地点，「@(海甸)」后面那串教室名（"(海甸)"是校区）
+- teacher: 老师，没有就空字符串
+- weekStart/weekEnd/weekType: 「1-16周」→1,16,"all"；「3-8周」→3,8,"all"；含「单」→"odd"；含「双」→"even"；没写→1,16,"all"
+
+格式：
+{"blocks":[{"no":1,"name":"仪器分析","loc":"分析化学实验室(4)","teacher":"谢宝平","weekStart":1,"weekEnd":16,"weekType":"all"},
+           {"no":2,"name":"自由泳","loc":"顺德体育场","teacher":"苏健","weekStart":1,"weekEnd":16,"weekType":"all"}]}
+
+只输出 JSON 对象，不要解释、不要 markdown 代码块。`;
+
 const PROMPT_VERIFY = (courses, headerDates) => `还是同一张课表截图。
 
 表头日期（从左到右 7 列）：${JSON.stringify(headerDates && headerDates.length ? headerDates : '（请你自己重新抄一遍）')}
@@ -157,8 +182,12 @@ export async function onRequestPost({ request, env }) {
     // ===== 第 1 遍：抽取 =====
     // raw 模式用简版提示词（只要文字），因为它不需要星期/节次，成功率高得多
     // body.expect：前端像素已数出图上色块数量，直接告诉模型，条数基本不会错
+    // body.slots：前端已在图上标好序号，模型按序号抄，顺序和条数都不用推断（最强）
     const expect = Number(body.expect) | 0;
-    const prompt1 = wantRaw ? PROMPT_RAW(expect) : PROMPT_MAIN;
+    const slots = Number(body.slots) | 0;
+    const prompt1 = slots > 0
+      ? PROMPT_SLOTS(slots)
+      : (wantRaw ? PROMPT_RAW(expect) : PROMPT_MAIN);
     let first = null, headerDates = [], usedModel = '', lastDetail = '';
     for (const model of MODELS) {
       try {
@@ -183,7 +212,7 @@ export async function onRequestPost({ request, env }) {
     // raw 模式：像素已经数出准确条数。
     // 两条触发重扫的线：①条数对不上 ②条数对上了但自报的节次顺序乱成一团（多半是凑数/拆块）
     let rescanned = false;
-    if (wantRaw && expect > 0) {
+    if (wantRaw && slots === 0 && expect > 0) {
       const q1 = disorderOf(first);
       if (first.length !== expect || q1 > 0.15) {
         try {
@@ -195,6 +224,20 @@ export async function onRequestPost({ request, env }) {
           }
         } catch { /* 重扫失败就用第一遍 */ }
       }
+    }
+
+    // ===== 按序号模式：直接把结果落到 1..slots 的槽位上，缺的补"(未识别)" =====
+    if (wantRaw && slots > 0) {
+      let best = alignSlots(first, slots);
+      // 有超过三成没读出来，再问一遍，取读得更全的那次
+      if (countUnknown(best) > slots * 0.3) {
+        try {
+          const p2 = await callModel(usedModel, key, prompt1, image);
+          const alt = alignSlots(buildCourses(p2.items, [], { noMerge: true }), slots);
+          if (countUnknown(alt) < countUnknown(best)) { best = alt; rescanned = true; }
+        } catch { /* 第二遍失败就用第一遍 */ }
+      }
+      return json({ courses: best, model: usedModel, verified: false, changed: 0, raw: true, slots, rescanned });
     }
 
     if (wantRaw) {
@@ -284,6 +327,38 @@ function extractPayload(text) {
   return { items: extractJsonArray(s) || [], headerDates: [] };
 }
 
+// 把「按序号读出的结果」落到 1..slots 的槽位上：缺的补空位，多出来的丢弃
+function alignSlots(courses, slots) {
+  const arr = new Array(slots).fill(null);
+  const rest = [];
+  for (const c of courses) {
+    const k = c.slot;
+    if (k >= 1 && k <= slots && !arr[k - 1]) arr[k - 1] = { ...c, slot: k };
+    else rest.push(c);
+  }
+  // 没给序号（或序号重复）的，按出现顺序填空位
+  let p = 0;
+  for (const c of rest) {
+    while (p < slots && arr[p]) p++;
+    if (p >= slots) break;
+    arr[p] = { ...c, slot: p + 1 };
+  }
+  for (let i = 0; i < slots; i++) {
+    if (!arr[i]) {
+      arr[i] = {
+        name: '(未识别)', slot: i + 1, day: 0, dayHint: 0, dayChar: '', colDate: '',
+        dayConflict: false, rows: [], start: 0, end: 0, loc: '', teacher: '',
+        weekStart: 1, weekEnd: 16, weekType: 'all',
+      };
+    }
+  }
+  return arr;
+}
+
+function countUnknown(list) {
+  return list.filter(c => !c.name || c.name === '(未识别)').length;
+}
+
 // 模型的输出是「从上到下」的，自报的起始节理应大致递增。
 // 若大量逆序，说明它在凑条数（把一个大块拆成两条 / 同一个块写两遍），这一遍不可信。
 function disorderOf(list) {
@@ -345,13 +420,13 @@ function extractJsonObject(text) {
 function buildCourses(raw, headerDates, opts) {
   const noMerge = !!(opts && opts.noMerge);
   const hdr = (headerDates || []).map(normDateNum);
-  const flat = [];
+    const flat = [];
   for (const item of raw || []) {
     // 模型有时直接吐 ["高数","英语"] 这种纯字符串数组
     if (typeof item === 'string') {
       const n = str(item);
       if (n) {
-        flat.push({ name: n, day: 0, dayHint: 0, dayConflict: false, dayChar: '', colDate: '',
+        flat.push({ name: n, slot: 0, day: 0, dayHint: 0, dayConflict: false, dayChar: '', colDate: '',
           min: 0, max: 0, loc: '', teacher: '', weekStart: 1, weekEnd: 16, weekType: 'all' });
       }
       continue;
@@ -367,6 +442,7 @@ function buildCourses(raw, headerDates, opts) {
     const wk = weekRange(item);
     flat.push({
       name,
+      slot: toInt(pick(item, ['no', 'index', 'idx', 'slot', '序号', '编号'])) || 0,
       day: pos.day,
       dayHint: pos.byChar || 0,
       dayConflict: pos.conflict,
@@ -387,6 +463,7 @@ function buildCourses(raw, headerDates, opts) {
     for (let i = c.min; i <= c.max; i++) rows.push(i);
     return {
       name: c.name,
+      slot: c.slot,
       day: c.day,
       dayHint: c.dayHint,
       dayChar: c.dayChar,

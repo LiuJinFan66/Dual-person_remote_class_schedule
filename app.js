@@ -20,6 +20,7 @@ const state = {
   preview: [],
   imageData: null,
   grid: null,             // 像素几何检测结果（星期/节次以它为准）
+  markedImage: null,      // 标了序号的图，模型按序号抄课名，不用自己排序
   editingExisting: false, // true = 正在编辑已保存的课表（允许保存空列表 = 清空）
 };
 
@@ -209,6 +210,7 @@ function normCourse(c) {
 
   return {
     name, day, start, end, loc, teacher, weekStart: ws, weekEnd: we, weekType,
+    slot: parseInt(c.slot, 10) || 0,      // 图上序号：有这个就直接对位到像素色块
     dayConflict: !!c.dayConflict,   // 三路读数不一致，前端标 ⚠ 提醒核对
     colDate: c.colDate || '',
   };
@@ -229,6 +231,7 @@ function bindUpload() {
     reader.onload = async () => {
       state.imageData = reader.result;
       state.grid = null;
+      state.markedImage = null;
       $('uploadHint').textContent = '已选择：' + file.name;
       await detectGrid();            // 先把像素定位做完，再允许点识别
       $('recognizeBtn').disabled = false;
@@ -252,8 +255,10 @@ function bindUpload() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: state.imageData,
+          // 优先发出"标了序号"的图：模型只要按编号抄课名，顺序和条数都不会错
+          image: state.markedImage || state.imageData,
           raw: true,
+          slots: state.markedImage && state.grid && state.grid.ok ? state.grid.blocks.length : 0,
           // 像素已经数出色块数量，把它交给模型作为「应有条数」的硬约束
           expect: state.grid && state.grid.ok ? state.grid.blocks.length : 0,
         }),
@@ -276,6 +281,8 @@ function bindUpload() {
         msg = `识别完成，但像素检出 ${state.grid.blocks.length} 块 / 识别出 ${state.preview.length} 条，对不上，位置用 AI 读数，请核对`;
       } else if (px.mode === 'partial') {
         msg = `识别出 ${state.preview.length} 条 / 像素检出 ${state.grid.blocks.length} 块，只对齐了前 ${px.applied} 条，剩余请手动核正`;
+      } else if (px.mode === 'slot') {
+        msg = `识别完成，${px.applied} 条按图上序号逐一对位（星期/节次由像素算出）`;
       } else if (px.mode === 'day') {
         msg = `识别完成，${px.applied} 条按「星期」分档对齐到像素色块，节次以像素为准`;
       } else {
@@ -317,8 +324,10 @@ async function detectGrid() {
     const px = ctx.getImageData(0, 0, w, h).data;
     const g = window.GridDetect.detect(px, w, h);
     state.grid = g;
+    state.markedImage = null;
     if (g.ok) {
-      hint.textContent = `像素定位成功：7 列 × ${g.nRow} 节，检出 ${g.blocks.length} 个课块（星期/节次以像素为准）`;
+      state.markedImage = buildMarkedImage(cv, g);
+      hint.textContent = `像素定位成功：7 列 × ${g.nRow} 节，检出 ${g.blocks.length} 个课块（已在图上标好序号，星期/节次以像素为准）`;
     } else {
       hint.textContent = `像素定位未成功（${g.reason}），星期/节次将用 AI 读数，请核对`;
     }
@@ -332,6 +341,45 @@ async function detectGrid() {
 function applyPixelGrid(courses, grid) {
   if (!window.GridDetect || !window.GridDetect.applyToCourses) return { applied: 0, mode: 'none' };
   return window.GridDetect.applyToCourses(courses, grid);
+}
+
+// 在每个色块右上角印一个序号：模型只要"按编号抄课名"，不用再数行列、也不用自己排顺序
+function buildMarkedImage(cv, g) {
+  try {
+    const c2 = document.createElement('canvas');
+    c2.width = cv.width; c2.height = cv.height;
+    const x = c2.getContext('2d');
+    x.drawImage(cv, 0, 0);
+    const colW = (g.cols[6] - g.cols[0]) / 6;
+    const fs = Math.max(16, Math.round(colW * 0.34));
+    x.font = `bold ${fs}px Arial, "PingFang SC", sans-serif`;
+    x.textAlign = 'center';
+    x.textBaseline = 'top';
+    // 同一列里每门课占了哪些行，用来判断"色块上方那格是不是空的"
+    const taken = {};
+    for (const b of g.blocks) {
+      for (let k = b.start; k <= b.end; k++) taken[b.day + '_' + k] = 1;
+    }
+    g.blocks.forEach((b, i) => {
+      const r = window.GridDetect.blockRect(g, b);
+      const t = String(i + 1);
+      const tw = x.measureText(t).width + fs * 0.5;
+      const th = fs * 1.16;
+      // 上方那格没人 → 把序号印在色块上面（不遮挡课名）；否则才压进色块右上角
+      const aboveFree = b.start <= 1 || !taken[b.day + '_' + (b.start - 1)];
+      const rx = Math.min(Math.max(0, r.x1 - tw - 1), cv.width - tw - 1);
+      let ry = aboveFree ? r.y0 - th - Math.round(fs * 0.16) : r.y0 + 2;
+      ry = Math.max(0, Math.min(ry, cv.height - th - 1));
+      // 深色块上白字、浅色块上深字都看不清，所以统一用实心红底白字
+      x.fillStyle = '#dc2626';
+      x.fillRect(rx, ry, tw, th);
+      x.fillStyle = '#ffffff';
+      x.fillText(t, rx + tw / 2, ry + th * 0.06);
+    });
+    return c2.toDataURL('image/jpeg', 0.88);
+  } catch (e) {
+    return null;
+  }
 }
 
 // ===== 预览表格（可编辑）=====
@@ -449,6 +497,7 @@ function bindPreviewActions() {
     $('confirmBtn').textContent = '保存并合并';
     $('uploadHint').textContent = '支持教务系统 / 超级课表的截图，自动识别课程名、星期、节次、周次、地点。';
     if (state.grid) { $('gridHint').hidden = true; state.grid = null; }
+    state.markedImage = null;
   });
 
   // 只改开学日期时立即保存（哪怕这一侧还没有课，也要把日期存下来）

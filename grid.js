@@ -354,6 +354,17 @@
     return out;
   }
 
+  // 一个色块在检测坐标系里的矩形（供前端画编号用）
+  function blockRect(grid, b) {
+    const cols = grid.cols, colW = (cols[6] - cols[0]) / 6;
+    const [xa, xb] = dayXRange(cols, colW, b.day - 1);
+    return {
+      x0: xa, x1: xb,
+      y0: Math.round(grid.phase + (b.start - 1) * grid.pitch),
+      y1: Math.round(grid.phase + b.end * grid.pitch),
+    };
+  }
+
   // ===== 把模型读到的文字按顺序贴到像素色块上 =====
   // 位置全部以像素为准。多级兜底，任何一级对不上都不会比"纯 AI 读数"更差：
   //   1) 按「起始节」分档（模型判起始节最稳）
@@ -364,6 +375,15 @@
   function applyToCourses(courses, grid) {
     if (!grid || !grid.ok || !grid.blocks.length || !courses || !courses.length) {
       return { applied: 0, mode: 'none' };
+    }
+    // 最省事也最准的一级：模型是「按图上标注的序号」抄的，序号直接就是色块下标
+    if (courses.every(c => c.slot >= 1 && c.slot <= grid.blocks.length) &&
+        new Set(courses.map(c => c.slot)).size === courses.length) {
+      for (const c of courses) {
+        const b = grid.blocks[c.slot - 1];
+        c.day = b.day; c.start = b.start; c.end = b.end; c.fromPixel = true;
+      }
+      return { applied: courses.length, mode: 'slot' };
     }
     const tryAssign = (keyFn) => {
       const bm = new Map();
@@ -477,7 +497,7 @@
     return cur;
   }
 
-  const api = { detect, applyToCourses, median, cvg };
+  const api = { detect, applyToCourses, blockRect, median, cvg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.GridDetect = api;
 })(typeof window !== 'undefined' ? window : globalThis);
